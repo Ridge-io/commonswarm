@@ -1,0 +1,1203 @@
+diff --git a/site/src/components/connect/agent-prompt.observer.test.ts b/site/src/components/connect/agent-prompt.observer.test.ts
+index 3a3e1bd..b713fdc 100644
+--- a/site/src/components/connect/agent-prompt.observer.test.ts
++++ b/site/src/components/connect/agent-prompt.observer.test.ts
+@@ -5,6 +5,7 @@ import ts from "typescript";
+ import { dashboardAgentConnection, dashboardAgentFilePrompt, dashboardAgentPrompt, promptCopyPayload} from "./agent-prompt";
+ import { parseAgentConnection } from "../../../../src/cloud/agent-profile";
+ import { AGENT_CONNECTION_FIELDS } from "../../../../src/cloud/agent-onboarding-contract";
++import { decodeAgentConnectionToken } from "../../../../src/cloud/agent-connection-token";
+ 
+ const TOKEN = `swm_agt_${"A_".repeat(21) + "A"}`;
+ const INPUT = {
+@@ -28,10 +29,17 @@ test("the generated connection is accepted by the CLI without changing the crede
+   assert.equal(raw.split(TOKEN).length - 1, 1);
+ });
+ 
+-test("one-paste setup includes a single connection and full agent ID, with private file instructions", () => {
++test("one-paste setup includes a single connection token and full agent ID, with private file instructions", () => {
+   const prompt = dashboardAgentPrompt(INPUT);
+-  assert.equal(prompt.split(TOKEN).length - 1, 1);
+-  assert.equal(prompt.split(INPUT.anonKey).length - 1, 1);
++  const tokenMatch = prompt.match(/\bCSWARMA\.[A-Z2-7]+\.[A-Z2-7]+\b/);
++  assert.ok(tokenMatch, "prompt must include a CSWARMA token");
++  const token = tokenMatch[0];
++  assert.match(token, /^CSWARMA\./);
++  assert.doesNotMatch(token, /_/);
++  assert.doesNotMatch(token, /:\/\//);
++  const decoded = decodeAgentConnectionToken(token);
++  assert.deepEqual(decoded, JSON.parse(dashboardAgentConnection(INPUT)));
++  assert.equal(decoded.principal_id, INPUT.credential.principalId);
+   assert.match(prompt, new RegExp(`connect-${INPUT.credential.principalId}/connection.json`));
+   assert.match(prompt, /file-writing tool/);
+   assert.match(prompt, /0700/);
+@@ -71,14 +79,18 @@ test("file download stays in memory, can be cleared, and key lifetime is under s
+ });
+ 
+ 
+-test("copy source has lossless fenced JSON and a plain executable install command", () => {
++test("copy source has lossless connection token and a plain executable install command", () => {
+   const prompt = dashboardAgentPrompt(INPUT);
+-  const raw = prompt.match(/```json\n([^]*?)\n```/)?.[1];
+-  assert.ok(raw);
+-  assert.deepEqual(JSON.parse(raw), JSON.parse(dashboardAgentConnection(INPUT)));
+-  assert.equal(parseAgentConnection(raw).credential.agent_token, TOKEN);
++  const token = prompt.match(/\bCSWARMA\.[A-Z2-7]+\.[A-Z2-7]+\b/)?.[0];
++  assert.ok(token);
++  assert.match(token, /^CSWARMA\./);
++  assert.doesNotMatch(token, /_/);
++  assert.doesNotMatch(token, /:\/\//);
++  const decoded = decodeAgentConnectionToken(token);
++  assert.deepEqual(decoded, JSON.parse(dashboardAgentConnection(INPUT)));
++  assert.equal(decoded.credential.agent_token, TOKEN);
++  assert.equal(decoded.principal_id, INPUT.credential.principalId);
+   assert.equal(prompt.match(/```sh\n([^]*?)\n```/)?.[1], "curl -fsSL https://commonswarm.com/install.sh | sh");
+-  assert.doesNotMatch(raw, /\\_/);
+   assert.match(prompt, /Use a setup file/);
+   assert.match(prompt, /Codex supports turn checks/);
+   const source = readFileSync(new URL("./AgentConnect.astro", import.meta.url), "utf8");
+@@ -107,7 +119,9 @@ test("the component copy method sends the source string even when displayed text
+   const prompt = dashboardAgentPrompt(INPUT);
+   await new Component(prompt).copy();
+   assert.equal(copied, prompt);
+-  assert.deepEqual(JSON.parse(copied.match(/```json\n([^]*?)\n```/)![1]!), JSON.parse(dashboardAgentConnection(INPUT)));
++  const token = copied.match(/\bCSWARMA\.[A-Z2-7]+\.[A-Z2-7]+\b/)?.[0];
++  assert.ok(token);
++  assert.deepEqual(decodeAgentConnectionToken(token), JSON.parse(dashboardAgentConnection(INPUT)));
+ });
+ 
+ 
+diff --git a/site/src/components/connect/agent-prompt.ts b/site/src/components/connect/agent-prompt.ts
+index c015161..8c692fb 100644
+--- a/site/src/components/connect/agent-prompt.ts
++++ b/site/src/components/connect/agent-prompt.ts
+@@ -4,6 +4,7 @@ import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-t
+ import { INSTALL_CMD } from "../../lib/install";
+ import { AGENT_CONNECTION_VERSION, type AgentConnectionEnvelope } from "../../../../src/cloud/agent-onboarding-contract";
+ import { AGENT_CREDENTIAL_MESSAGE_D088 } from "../../../../src/cloud/agent-credential-input";
++import { encodeAgentConnectionToken } from "../../../../src/cloud/agent-connection-codec";
+ 
+ export interface DashboardPromptInput {
+   credential: AgentCredential;
+@@ -47,7 +48,8 @@ export function dashboardAgentFilePrompt(_input: DashboardPromptInput): string {
+ /** One-paste fallback: one credential and one copy of the public connection data. */
+ export function dashboardAgentPrompt(input: DashboardPromptInput): string {
+   const path = `~/.cswarm/connect-${input.credential.principalId}/connection.json`;
+-  return `${setupPrompt(`Save only the JSON code block contents with your file-writing tool to ${path}. Keep all characters unchanged. Set its directory to 0700 and the file to 0600. If damaged, use “Use a setup file” in CommonSwarm; do not repair credentials or paste them into chat.`)}\n\n${codeBlock("json", dashboardAgentConnection(input))}`;
++  const token = encodeAgentConnectionToken(dashboardAgentConnection(input));
++  return `${setupPrompt(`Save this connection token with your file-writing tool to ${path}. Keep all characters unchanged. Set its directory to 0700 and the file to 0600. If damaged, use “Use a setup file” in CommonSwarm; do not repair credentials or paste them into chat.`)}\n\n${token}`;
+ }
+ 
+ /** Keep machine input out of Markdown prose, including embedded fence characters. */
+diff --git a/src/cloud/agent-connection-codec.ts b/src/cloud/agent-connection-codec.ts
+new file mode 100644
+index 0000000..3038019
+--- /dev/null
++++ b/src/cloud/agent-connection-codec.ts
+@@ -0,0 +1,79 @@
++import type { AgentConnectionEnvelope } from "./agent-onboarding-contract.js";
++
++export const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
++
++export const TOKEN_VERSION = "A";
++export const TOKEN_PREFIX = `CSWARM${TOKEN_VERSION}`;
++export const TOKEN_MARKER = `${TOKEN_PREFIX}.`;
++
++export function base32Encode(bytes: Uint8Array): string {
++  let bits = 0;
++  let value = 0;
++  let out = "";
++  for (const b of bytes) {
++    value = (value << 8) | b;
++    bits += 8;
++    while (bits >= 5) {
++      out += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
++      bits -= 5;
++    }
++  }
++  if (bits > 0) {
++    out += BASE32_ALPHABET[(value << (5 - bits)) & 31];
++  }
++  return out;
++}
++
++export function base32Decode(s: string): Uint8Array {
++  let bits = 0;
++  let value = 0;
++  const out: number[] = [];
++  for (const c of s) {
++    const i = BASE32_ALPHABET.indexOf(c);
++    if (i < 0) continue;
++    value = (value << 5) | i;
++    bits += 5;
++    if (bits >= 8) {
++      out.push((value >>> (bits - 8)) & 255);
++      bits -= 8;
++    }
++  }
++  return Uint8Array.from(out);
++}
++
++export function crc32(bytes: Uint8Array): number {
++  let c = ~0;
++  for (const x of bytes) {
++    c ^= x;
++    for (let k = 0; k < 8; k++) {
++      c = (c >>> 1) ^ (0xEDB88320 & -(c & 1));
++    }
++  }
++  return (~c) >>> 0;
++}
++
++export function crc32Bytes(crc: number): Uint8Array {
++  return Uint8Array.from([24, 16, 8, 0].map((shift) => (crc >>> shift) & 255));
++}
++
++export function normalizeTokenCandidate(raw: string): string {
++  return raw.toUpperCase().replace(/[^A-Z2-7.]/g, "");
++}
++
++export function isAgentConnectionToken(raw: string): boolean {
++  if (typeof raw !== "string") return false;
++  const trimmed = raw.trim();
++  if (trimmed.startsWith("{")) return false;
++  const cleaned = normalizeTokenCandidate(trimmed);
++  return cleaned.includes(TOKEN_MARKER);
++}
++
++export function encodeAgentConnectionToken(
++  envelope: AgentConnectionEnvelope | Record<string, unknown> | string,
++): string {
++  const json = typeof envelope === "string" ? envelope : JSON.stringify(envelope);
++  const bytes = new TextEncoder().encode(json);
++  const crc = crc32(bytes);
++  const crcB = crc32Bytes(crc);
++  return `${TOKEN_MARKER}${base32Encode(bytes)}.${base32Encode(crcB)}`;
++}
+diff --git a/src/cloud/agent-connection-token.ts b/src/cloud/agent-connection-token.ts
+new file mode 100644
+index 0000000..b0ce83f
+--- /dev/null
++++ b/src/cloud/agent-connection-token.ts
+@@ -0,0 +1,259 @@
++import { parseAgentCredentialInput } from "./agent-credential-input.js";
++import {
++  AGENT_CONNECTION_FIELDS,
++  AGENT_CONNECTION_VERSION,
++  type AgentConnectionEnvelope,
++  AgentSetupError,
++  ONBOARDING_UUID,
++} from "./agent-onboarding-contract.js";
++import {
++  BASE32_ALPHABET,
++  TOKEN_VERSION,
++  TOKEN_PREFIX,
++  TOKEN_MARKER,
++  base32Encode,
++  base32Decode,
++  crc32,
++  crc32Bytes,
++  encodeAgentConnectionToken,
++  normalizeTokenCandidate,
++  isAgentConnectionToken,
++} from "./agent-connection-codec.js";
++import { cloudTarget, type CloudTarget } from "./config.js";
++
++export {
++  BASE32_ALPHABET,
++  TOKEN_VERSION,
++  TOKEN_PREFIX,
++  TOKEN_MARKER,
++  base32Encode,
++  base32Decode,
++  crc32,
++  crc32Bytes,
++  encodeAgentConnectionToken,
++  normalizeTokenCandidate,
++  isAgentConnectionToken,
++};
++
++const REPAIR_USE_SETUP_FILE =
++  "Use ‘Use a setup file’ in CommonSwarm and run setup with that file. Do not edit credentials or paste them into chat.";
++
++function checkedTarget(url: string, anonKey: string): CloudTarget {
++  try {
++    const target = cloudTarget(url, anonKey);
++    const parsed = new URL(target.url);
++    if (parsed.protocol !== "https:" && !["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname)) throw new Error();
++    if (anonKey.length > 4096 || /[\u0000-\u0020\u007f]/.test(anonKey)) throw new Error();
++    return target;
++  } catch {
++    throw new AgentSetupError("connection_target_invalid", "Use an HTTPS deployment origin and its public key. HTTP is allowed only for local tests.");
++  }
++}
++
++export function validateAgentConnectionEnvelope(
++  value: unknown,
++): AgentConnectionEnvelope {
++  if (
++    !value ||
++    Array.isArray(value) ||
++    typeof value !== "object" ||
++    (value as Record<string, unknown>).version !== AGENT_CONNECTION_VERSION ||
++    Object.keys(value).length !== AGENT_CONNECTION_FIELDS.length ||
++    AGENT_CONNECTION_FIELDS.some((key) => !Object.hasOwn(value as Record<string, unknown>, key)) ||
++    typeof (value as Record<string, unknown>).url !== "string" ||
++    typeof (value as Record<string, unknown>).anon_key !== "string" ||
++    typeof (value as Record<string, unknown>).workspace_id !== "string" ||
++    !ONBOARDING_UUID.test((value as Record<string, unknown>).workspace_id as string) ||
++    typeof (value as Record<string, unknown>).principal_id !== "string" ||
++    !ONBOARDING_UUID.test((value as Record<string, unknown>).principal_id as string) ||
++    !(value as Record<string, unknown>).credential ||
++    typeof (value as Record<string, unknown>).credential !== "object" ||
++    Array.isArray((value as Record<string, unknown>).credential)
++  ) {
++    throw new AgentSetupError(
++      "connection_invalid",
++      `Expected connection version ${AGENT_CONNECTION_VERSION} with fields: ${AGENT_CONNECTION_FIELDS.join(", ")}. Save the supplied file unchanged.`,
++    );
++  }
++  const obj = value as Record<string, unknown>;
++  if (/^\s*\[[\s\S]*\]\(/.test(obj.url as string)) {
++    throw new AgentSetupError(
++      "connection_target_invalid",
++      `The connection URL appears to be a Markdown link. ${REPAIR_USE_SETUP_FILE}`,
++    );
++  }
++  const target = checkedTarget(obj.url as string, obj.anon_key as string);
++  const agent = parseAgentCredentialInput(JSON.stringify(obj.credential), {
++    kind: "stdin",
++  });
++  if (
++    !agent.durable ||
++    agent.principalId !== (obj.principal_id as string).toLowerCase()
++  ) {
++    throw new AgentSetupError(
++      "connection_identity_mismatch",
++      "The connection and credential name different agents. Ask for a new connection file.",
++    );
++  }
++  return {
++    version: AGENT_CONNECTION_VERSION,
++    url: target.url,
++    anon_key: target.anonKey,
++    workspace_id: (obj.workspace_id as string).toLowerCase(),
++    principal_id: agent.principalId,
++    credential: obj.credential as Record<string, unknown>,
++  };
++}
++
++export function decodeAgentConnectionToken(raw: string): AgentConnectionEnvelope {
++  if (typeof raw !== "string") {
++    throw new AgentSetupError(
++      "token_marker_missing",
++      `The connection token is missing its marker. ${REPAIR_USE_SETUP_FILE}`,
++    );
++  }
++
++  const markerRegex =
++    /C[\s\*\_\\\`]*S[\s\*\_\\\`]*W[\s\*\_\\\`]*A[\s\*\_\\\`]*R[\s\*\_\\\`]*M[\s\*\_\\\`]*A[\s\*\_\\\`]*\./i;
++  const match = raw.match(markerRegex);
++  if (!match || match.index === undefined) {
++    throw new AgentSetupError(
++      "token_marker_missing",
++      `The connection token is missing its marker. ${REPAIR_USE_SETUP_FILE}`,
++    );
++  }
++
++  const markerStart = match.index;
++  const afterMarker = raw.slice(markerStart + match[0].length);
++
++  let bodyChars = "";
++  let crcChars = "";
++  let inCrc = false;
++  let crcBase32Count = 0;
++  let tokenEnd = -1;
++  const extraParts: string[] = [];
++
++  for (let i = 0; i < afterMarker.length; i++) {
++    const ch = afterMarker[i]!;
++    if (ch === ".") {
++      if (!inCrc) {
++        inCrc = true;
++        continue;
++      } else {
++        extraParts.push("");
++        continue;
++      }
++    }
++
++    const upper = ch.toUpperCase();
++    const isBase32 = BASE32_ALPHABET.includes(upper);
++
++    if (extraParts.length > 0) {
++      if (isBase32) {
++        extraParts[extraParts.length - 1] += upper;
++      }
++      continue;
++    }
++
++    if (!inCrc) {
++      if (isBase32) {
++        bodyChars += upper;
++      }
++    } else {
++      if (isBase32) {
++        crcChars += upper;
++        crcBase32Count++;
++        if (crcBase32Count === 7) {
++          let nextNonFormat: string | null = null;
++          for (let j = i + 1; j < afterMarker.length; j++) {
++            const cj = afterMarker[j]!;
++            if (/[\*\_\\\`]/.test(cj)) continue;
++            nextNonFormat = cj;
++            break;
++          }
++          if (nextNonFormat === null || /[\s\)\]\>\'\"\`]/.test(nextNonFormat)) {
++            tokenEnd = markerStart + match[0].length + i + 1;
++            break;
++          }
++        }
++      }
++    }
++  }
++
++  let parts: string[];
++  if (tokenEnd !== -1 && extraParts.length === 0) {
++    parts = [TOKEN_PREFIX, bodyChars, crcChars];
++  } else {
++    if (extraParts.length > 0) {
++      parts = [TOKEN_PREFIX, bodyChars, crcChars, ...extraParts];
++    } else {
++      parts = [TOKEN_PREFIX, bodyChars, crcChars];
++    }
++  }
++
++  if (
++    parts.length !== 3 ||
++    parts[0] !== TOKEN_PREFIX ||
++    parts[1].length === 0 ||
++    parts[2].length === 0
++  ) {
++    throw new AgentSetupError(
++      "token_shape_invalid",
++      `The connection token format is invalid. ${REPAIR_USE_SETUP_FILE}`,
++    );
++  }
++
++  if (parts[2].length !== 7) {
++    throw new AgentSetupError(
++      "token_checksum_invalid",
++      `The connection token checksum did not match. ${REPAIR_USE_SETUP_FILE}`,
++    );
++  }
++
++  const body = base32Decode(parts[1]);
++  const want = base32Decode(parts[2]);
++
++  if (want.length !== 4) {
++    throw new AgentSetupError(
++      "token_checksum_invalid",
++      `The connection token checksum did not match. ${REPAIR_USE_SETUP_FILE}`,
++    );
++  }
++
++  if (base32Encode(want) !== parts[2] || base32Encode(body) !== parts[1]) {
++    throw new AgentSetupError(
++      "token_checksum_invalid",
++      `The connection token checksum did not match. ${REPAIR_USE_SETUP_FILE}`,
++    );
++  }
++
++  const got = crc32(body);
++  const wantN =
++    ((want[0]! << 24) | (want[1]! << 16) | (want[2]! << 8) | want[3]!) >>> 0;
++  if (got !== wantN) {
++    throw new AgentSetupError(
++      "token_checksum_invalid",
++      `The connection token checksum did not match. ${REPAIR_USE_SETUP_FILE}`,
++    );
++  }
++
++  let jsonString: string;
++  try {
++    jsonString = new TextDecoder("utf-8", { fatal: true }).decode(body);
++  } catch {
++    throw new AgentSetupError(
++      "token_payload_invalid",
++      `The connection token payload is damaged. ${REPAIR_USE_SETUP_FILE}`,
++    );
++  }
++  let parsed: unknown;
++  try {
++    parsed = JSON.parse(jsonString);
++  } catch {
++    throw new AgentSetupError(
++      "token_payload_invalid",
++      `The connection token payload is damaged. ${REPAIR_USE_SETUP_FILE}`,
++    );
++  }
++  return validateAgentConnectionEnvelope(parsed);
++}
+diff --git a/src/cloud/agent-onboarding-contract.ts b/src/cloud/agent-onboarding-contract.ts
+index 17b3c45..db5ac70 100644
+--- a/src/cloud/agent-onboarding-contract.ts
++++ b/src/cloud/agent-onboarding-contract.ts
+@@ -18,6 +18,13 @@ export const AGENT_CONNECTION_FIELDS = [
+   "version", "url", "anon_key", "workspace_id", "principal_id", "credential",
+ ] as const;
+ 
++export const ONBOARDING_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
++
++export class AgentSetupError extends Error {
++  readonly name = "AgentSetupError";
++  constructor(readonly code: string, message: string) { super(message); }
++}
++
+ export interface AgentConnectionEnvelope {
+   version: typeof AGENT_CONNECTION_VERSION;
+   url: string;
+diff --git a/src/cloud/agent-profile.ts b/src/cloud/agent-profile.ts
+index 386b1c3..3fb11bc 100644
+--- a/src/cloud/agent-profile.ts
++++ b/src/cloud/agent-profile.ts
+@@ -11,15 +11,19 @@ import { readSecureJsonFileIfPresent, writeSecureJsonFile, withFileLock } from "
+ import {
+   AGENT_CONNECTION_FIELDS, AGENT_CONNECTION_VERSION,
+   type AgentConnectionEnvelope,
++  AgentSetupError,
++  ONBOARDING_UUID,
+ } from "./agent-onboarding-contract.js";
++import {
++  isAgentConnectionToken,
++  decodeAgentConnectionToken,
++  encodeAgentConnectionToken,
++} from "./agent-connection-token.js";
++
+ 
+-export const ONBOARDING_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+ export const ONBOARDING_MAX_FILE_BYTES = 16 * 1024;
+ 
+-export class AgentSetupError extends Error {
+-  readonly name = "AgentSetupError";
+-  constructor(readonly code: string, message: string) { super(message); }
+-}
++export { AgentSetupError, ONBOARDING_UUID };
+ 
+ export interface AgentProfile {
+   version: 1;
+@@ -69,7 +73,12 @@ export async function assertPrivateLocation(path: string): Promise<string> {
+   return absolute;
+ }
+ 
++export { isAgentConnectionToken, decodeAgentConnectionToken, encodeAgentConnectionToken };
++
+ export function parseAgentConnection(raw: string): AgentConnectionEnvelope {
++  if (isAgentConnectionToken(raw)) {
++    return decodeAgentConnectionToken(raw);
++  }
+   let value: Record<string, unknown>;
+   try { value = JSON.parse(raw); } catch {
+     throw new AgentSetupError("connection_invalid", raw.includes("\\_") || /^\s*```/.test(raw)
+diff --git a/tests/p1-cli/agent-connection-token.test.ts b/tests/p1-cli/agent-connection-token.test.ts
+new file mode 100644
+index 0000000..30ff5f4
+--- /dev/null
++++ b/tests/p1-cli/agent-connection-token.test.ts
+@@ -0,0 +1,683 @@
++import assert from "node:assert/strict";
++import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { after, before, test } from "node:test";
++import {
++  base32Decode,
++  base32Encode,
++  crc32,
++  decodeAgentConnectionToken,
++  encodeAgentConnectionToken,
++  isAgentConnectionToken,
++} from "../../src/cloud/agent-connection-token.js";
++import {
++  AgentSetupError,
++  parseAgentConnection,
++} from "../../src/cloud/agent-profile.js";
++import { setupAgent } from "../../src/cloud/agent-setup.js";
++import {
++  AGENT_CREDENTIAL_MESSAGE_D088,
++  AgentCredentialInputError,
++} from "../../src/cloud/agent-credential-input.js";
++import {
++  AGENT_CONNECTION_VERSION,
++  type AgentConnectionEnvelope,
++} from "../../src/cloud/agent-onboarding-contract.js";
++
++const WS = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
++const AGENT = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
++const OWNER = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
++const OTHER = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
++const TOKEN = `swm_agt_${"A".repeat(43)}`;
++
++let root: string;
++let previousState: string | undefined;
++
++before(async () => {
++  root = await mkdtemp(join(tmpdir(), "cswarm-token-test-"));
++  previousState = process.env.SWARM_AGENT_STATE_DIR;
++  process.env.SWARM_AGENT_STATE_DIR = join(root, "renewal");
++});
++
++after(async () => {
++  if (previousState === undefined) delete process.env.SWARM_AGENT_STATE_DIR;
++  else process.env.SWARM_AGENT_STATE_DIR = previousState;
++  await rm(root, { recursive: true, force: true });
++});
++
++function artifact(principal = AGENT) {
++  return {
++    message: AGENT_CREDENTIAL_MESSAGE_D088,
++    status: "accepted",
++    principal_id: principal,
++    token_id: "11111111-1111-4111-8111-111111111111",
++    run_id: "22222222-2222-4222-8222-222222222222",
++    agent_token: TOKEN,
++    expires_at: "2099-01-01T00:00:00.000Z",
++  };
++}
++
++function connection(url = "https://fixture.example", principal = AGENT): AgentConnectionEnvelope {
++  return {
++    version: AGENT_CONNECTION_VERSION,
++    url,
++    anon_key: "public-fixture",
++    workspace_id: WS,
++    principal_id: principal,
++    credential: artifact(principal),
++  };
++}
++
++function mockFetcher(principal = AGENT) {
++  const requests: Array<Record<string, unknown>> = [];
++  const fetcher = (async (_input: unknown, init?: RequestInit) => {
++    const body = JSON.parse(String(init?.body));
++    requests.push(body);
++    assert.equal(new Headers(init?.headers).get("authorization"), `Bearer ${TOKEN}`);
++    assert.equal(init?.redirect, "error", "credentials must not follow a redirect");
++    let result;
++    if (body.resource === "members") {
++      result = {
++        members: [{ user_id: OWNER, display_name: "Owner" }],
++        agents: [{ principal_id: principal, name: "Test agent", owner_user_id: OWNER }],
++        identity: { credential_valid: true, principal_id: principal, workspace_id: WS, owner_user_id: OWNER },
++      };
++    } else if (body.resource === "signals") {
++      result = {
++        signals: [],
++        capabilities: { sender_owner_relation: 1, cursor_after: 1 },
++      };
++    } else {
++      throw new Error(`unexpected request: ${body.resource}`);
++    }
++    return new Response(JSON.stringify(result), { status: 200 });
++  }) as typeof fetch;
++  return { fetcher, requests };
++}
++
++test("a token with underscores escaped as \\_ inserted (must succeed)", () => {
++  // Wrong implementation rationale:
++  // A wrong implementation that fails to strip backslashes or fails to tolerate non-base32
++  // escaped characters (e.g. treating \`\\_\` as syntax errors or failing to strip backslashes
++  // before base32 decoding) would fail. To pass, an implementation must filter out all
++  // characters outside the base32 alphabet (A-Z, 2-7, and dot), ignoring backslashes and
++  // underscores introduced by Markdown processors.
++  const env = connection();
++  const token = encodeAgentConnectionToken(env);
++
++  const hostileVariants = [
++    `\\_${token}`,
++    `${token}\\_`,
++    `${token.slice(0, 20)}\\_${token.slice(20)}`,
++    `${token.slice(0, 30)}\\_\\_${token.slice(30, 60)}\\_${token.slice(60)}`,
++    token.replace("CSWARMA.", "CSWARMA.\\_"),
++    token.replace("CSWARMA.", "CSWARMA._"),
++  ];
++
++  for (const variant of hostileVariants) {
++    const decoded = decodeAgentConnectionToken(variant);
++    assert.deepEqual(decoded, env);
++    assert.equal(isAgentConnectionToken(variant), true);
++    assert.deepEqual(parseAgentConnection(variant), env);
++  }
++});
++
++test("a token that has been through a Markdown link conversion (must succeed)", () => {
++  // Wrong implementation rationale:
++  // A wrong implementation that expects the input string to match the token start strictly,
++  // or fails to discard Markdown link syntax delimiters \`[...]\` and \`(...) \`, would fail.
++  // To pass, an implementation must locate the \`CSWARMA.\` prefix marker anywhere within
++  // the text and drop non-base32 link syntax characters.
++  const env = connection();
++  const token = encodeAgentConnectionToken(env);
++
++  const markdownVariants = [
++    `[${token}](https://example.com)`,
++    `[Connect to agent](${token})`,
++    `[${token}](#)`,
++    `[${token}](${token})`,
++    `<${token}>`,
++    `See [documentation](https://example.com/docs) then use ${token} to connect.`,
++    `Connect: [${token}](https://commonswarm.org/agent-onboard#anchor)`,
++  ];
++
++  for (const variant of markdownVariants) {
++    const decoded = decodeAgentConnectionToken(variant);
++    assert.deepEqual(decoded, env);
++    assert.equal(isAgentConnectionToken(variant), true);
++    assert.deepEqual(parseAgentConnection(variant), env);
++  }
++});
++
++test("a token wrapped in altered or malformed code fences (must succeed)", () => {
++  // Wrong implementation rationale:
++  // A wrong implementation that relies on rigid code fence regular expressions,
++  // requires clean newlines around fences, or fails when fence language tags (like \`json\`)
++  // are glued directly to the prefix marker without whitespace, would fail to extract the token.
++  // To pass, an implementation must locate the \`CSWARMA.\` prefix marker even when preceded
++  // by arbitrary fence tags and strip backticks and surrounding markdown formatting.
++  const env = connection();
++  const token = encodeAgentConnectionToken(env);
++
++  const fenceVariants = [
++    `\`\`\`json\n${token}\n\`\`\``,
++    `\`\`\`json\r\n${token}\r\n\`\`\``,
++    `\`\`\`\n${token}\n\`\`\``,
++    `\`\`json\n${token}\n\`\``,
++    `\`\`\`\`json\n${token}\n\`\`\`\``,
++    `\`\`\`json${token}\`\`\``, // language tag glued directly to token prefix
++    `\`\`json${token}\`\``,
++    `\`${token}\``,
++    `\`\`\`text\n${token}\n\`\`\``,
++    `~~~json\n${token}\n~~~`,
++  ];
++
++  for (const variant of fenceVariants) {
++    const decoded = decodeAgentConnectionToken(variant);
++    assert.deepEqual(decoded, env);
++    assert.equal(isAgentConnectionToken(variant), true);
++    assert.deepEqual(parseAgentConnection(variant), env);
++  }
++});
++
++test("a token broken across lines with spaces and tabs inserted (must SUCCEED: wrapping is recoverable)", () => {
++  // Wrong implementation rationale:
++  // A wrong implementation that assumes the token is delivered on a single contiguous line,
++  // or considers whitespace (spaces, tabs, line breaks) as invalid base32 characters, would fail
++  // on tokens wrapped across lines by terminal windows or chat applications. To pass,
++  // the implementation must strip all whitespace characters and recover the contiguous base32 token.
++  const env = connection();
++  const token = encodeAgentConnectionToken(env);
++
++  const wrappedVariants = [
++    token.match(/.{1,25}/g)!.join("\n"),
++    token.match(/.{1,30}/g)!.join("\r\n"),
++    token.match(/.{1,20}/g)!.join("\n  \t  "),
++    token.match(/.{1,40}/g)!.join("\t\n\t"),
++    `   \t\n${token.slice(0, 40)}\n   \t   ${token.slice(40, 100)}\r\n\t   ${token.slice(100)}   \n\t`,
++  ];
++
++  for (const variant of wrappedVariants) {
++    const decoded = decodeAgentConnectionToken(variant);
++    assert.deepEqual(decoded, env);
++    assert.equal(isAgentConnectionToken(variant), true);
++    assert.deepEqual(parseAgentConnection(variant), env);
++  }
++});
++
++test("a lowercase token (must succeed)", () => {
++  // Wrong implementation rationale:
++  // A wrong implementation that is strictly case-sensitive and only accepts uppercase
++  // RFC 4648 base32 letters (A-Z) would fail when input has been lowercased by a user
++  // or chat transformer. To pass, an implementation must normalize input with .toUpperCase()
++  // before matching the marker and decoding base32.
++  const env = connection();
++  const token = encodeAgentConnectionToken(env);
++
++  const lower = token.toLowerCase();
++  assert.notEqual(lower, token);
++  assert.deepEqual(decodeAgentConnectionToken(lower), env);
++  assert.equal(isAgentConnectionToken(lower), true);
++  assert.deepEqual(parseAgentConnection(lower), env);
++
++  const mixed = token
++    .split("")
++    .map((c, i) => (i % 2 === 0 ? c.toLowerCase() : c.toUpperCase()))
++    .join("");
++  assert.deepEqual(decodeAgentConnectionToken(mixed), env);
++  assert.equal(isAgentConnectionToken(mixed), true);
++  assert.deepEqual(parseAgentConnection(mixed), env);
++});
++
++test("a truncated token (must fail on the checksum, not on JSON)", () => {
++  // Wrong implementation rationale:
++  // A wrong implementation that attempts to decode and parse JSON before validating
++  // the CRC32 checksum would fail with a JSON SyntaxError (e.g. "Unexpected end of JSON input")
++  // or a UTF-8 decoding error when given a truncated token, rather than detecting the corruption
++  // through the checksum. To pass, the implementation must verify the CRC32 checksum FIRST
++  // before attempting UTF-8 decoding or JSON parsing, throwing `token_checksum_invalid`.
++  const env = connection();
++  const token = encodeAgentConnectionToken(env);
++
++  const originalJsonParse = JSON.parse;
++  let jsonParseCalls = 0;
++  JSON.parse = (...args: Parameters<typeof originalJsonParse>) => {
++    jsonParseCalls++;
++    return originalJsonParse(...args);
++  };
++
++  try {
++    // 1. Cut 1 to 5 characters from the end of the token
++    for (let cut = 1; cut <= 5; cut++) {
++      const truncated = token.slice(0, -cut);
++      assert.throws(
++        () => decodeAgentConnectionToken(truncated),
++        (err: unknown) => {
++          assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++          assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
++          assert.ok(!(err instanceof SyntaxError), "must not throw a JSON SyntaxError");
++          return true;
++        },
++      );
++    }
++
++    // 2. Cut characters from the body while keeping the checksum portion
++    const lastDot = token.lastIndexOf(".");
++    const prefixAndBody = token.slice(0, lastDot);
++    const checksumPart = token.slice(lastDot + 1);
++
++    for (let cut = 1; cut <= 5; cut++) {
++      const truncatedBody = `${prefixAndBody.slice(0, -cut)}.${checksumPart}`;
++      assert.throws(
++        () => decodeAgentConnectionToken(truncatedBody),
++        (err: unknown) => {
++          assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++          assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
++          assert.ok(!(err instanceof SyntaxError), "must not throw a JSON SyntaxError");
++          return true;
++        },
++      );
++    }
++
++    // Prove checksum failure happened BEFORE JSON.parse or envelope validation was reached
++    assert.equal(jsonParseCalls, 0, "JSON.parse must never be reached for truncated tokens failing checksum");
++  } finally {
++    JSON.parse = originalJsonParse;
++  }
++});
++
++test("one flipped character (must fail on the checksum)", () => {
++  // Wrong implementation rationale:
++  // A wrong implementation that lacks CRC32 checksum verification or ignores checksum
++  // mismatches would decode corrupted payload data and fail only later during JSON parsing
++  // or semantic validation. To pass, an implementation must compute the CRC32 over the
++  // decoded body and reject any mismatch with `token_checksum_invalid`.
++  const env = connection();
++  const token = encodeAgentConnectionToken(env);
++
++  const originalJsonParse = JSON.parse;
++  let jsonParseCalls = 0;
++  JSON.parse = (...args: Parameters<typeof originalJsonParse>) => {
++    jsonParseCalls++;
++    return originalJsonParse(...args);
++  };
++
++  try {
++    // Flip a character in the token body
++    const bodyStart = token.indexOf(".") + 1;
++    const bodyEnd = token.lastIndexOf(".");
++    const bodyMid = Math.floor((bodyStart + bodyEnd) / 2);
++    const flippedBodyChar = token[bodyMid] === "A" ? "B" : "A";
++    const flippedBodyToken =
++      token.slice(0, bodyMid) + flippedBodyChar + token.slice(bodyMid + 1);
++
++    assert.throws(
++      () => decodeAgentConnectionToken(flippedBodyToken),
++      (err: unknown) => {
++        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++        assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
++        return true;
++      },
++    );
++
++    // Flip a character in the checksum portion
++    const crcStart = bodyEnd + 1;
++    const crcIdx = crcStart + 2;
++    const flippedCrcChar = token[crcIdx] === "A" ? "B" : "A";
++    const flippedCrcToken =
++      token.slice(0, crcIdx) + flippedCrcChar + token.slice(crcIdx + 1);
++
++    assert.throws(
++      () => decodeAgentConnectionToken(flippedCrcToken),
++      (err: unknown) => {
++        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++        assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
++        return true;
++      },
++    );
++
++    // Flip the final body symbol (must fail canonical base32 check, not reach JSON)
++    const finalBodyIdx = bodyEnd - 1;
++    const flippedFinalBodyChar = token[finalBodyIdx] === "U" ? "V" : "U";
++    const flippedFinalBodyToken =
++      token.slice(0, finalBodyIdx) + flippedFinalBodyChar + token.slice(bodyEnd);
++
++    assert.throws(
++      () => decodeAgentConnectionToken(flippedFinalBodyToken),
++      (err: unknown) => {
++        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++        assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
++        return true;
++      },
++    );
++
++    // Flip the final checksum symbol (must fail canonical base32 check, not reach JSON)
++    const finalCrcIdx = token.length - 1;
++    const flippedFinalCrcChar = token[finalCrcIdx] === "Q" ? "R" : "Q";
++    const flippedFinalCrcToken =
++      token.slice(0, finalCrcIdx) + flippedFinalCrcChar;
++
++    assert.throws(
++      () => decodeAgentConnectionToken(flippedFinalCrcToken),
++      (err: unknown) => {
++        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++        assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
++        return true;
++      },
++    );
++
++    // Prove all checksum failures happened BEFORE JSON.parse or envelope validation was reached
++    assert.equal(jsonParseCalls, 0, "JSON.parse must never be reached for flipped characters failing checksum");
++  } finally {
++    JSON.parse = originalJsonParse;
++  }
++});
++
++test("an envelope whose credential is invalid (must fail in the existing validator, not the decoder)", () => {
++  // Wrong implementation rationale:
++  // A wrong implementation that conflates token decoding with credential schema validation
++  // might throw a token decoder error (like `token_payload_invalid`) instead of delegating
++  // to the existing envelope and credential validators. Conversely, a wrong implementation
++  // that fails to execute the existing validator would accept malformed credentials.
++  // To pass, the token decoder must successfully decode the valid base32 envelope and pass
++  // it to `validateAgentConnectionEnvelope`, which preserves existing validator error codes.
++  const env = connection();
++
++  // Case 1: Principal mismatch between envelope principal_id and credential principal_id
++  const mismatchedEnvelope = {
++    ...env,
++    principal_id: OTHER,
++  };
++  const tokenMismatch = encodeAgentConnectionToken(mismatchedEnvelope);
++  assert.throws(
++    () => decodeAgentConnectionToken(tokenMismatch),
++    (err: unknown) => {
++      assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++      assert.equal((err as AgentSetupError).code, "connection_identity_mismatch");
++      assert.notEqual((err as AgentSetupError).code, "token_payload_invalid");
++      assert.notEqual((err as AgentSetupError).code, "token_checksum_invalid");
++      return true;
++    },
++  );
++
++  // Case 2: Credential missing required agent_token
++  const invalidCredEnvelope = {
++    ...env,
++    credential: {
++      ...env.credential,
++      agent_token: undefined,
++    },
++  };
++  const tokenBadCred = encodeAgentConnectionToken(invalidCredEnvelope as unknown as AgentConnectionEnvelope);
++  assert.throws(
++    () => decodeAgentConnectionToken(tokenBadCred),
++    (err: unknown) => {
++      assert.ok(err instanceof AgentCredentialInputError, `expected AgentCredentialInputError but got ${err}`);
++      assert.equal(err.code, "agent_credential_missing_agent_token");
++      return true;
++    },
++  );
++
++  // Case 3: Credential is not an object
++  const nonObjectCredEnvelope = {
++    ...env,
++    credential: "not-an-object",
++  };
++  const tokenNonObj = encodeAgentConnectionToken(nonObjectCredEnvelope as unknown as AgentConnectionEnvelope);
++  assert.throws(
++    () => decodeAgentConnectionToken(tokenNonObj),
++    (err: unknown) => {
++      assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++      assert.equal((err as AgentSetupError).code, "connection_invalid");
++      assert.notEqual((err as AgentSetupError).code, "token_payload_invalid");
++      return true;
++    },
++  );
++});
++
++test("a round trip: encode then decode returns the original bytes exactly", () => {
++  // Wrong implementation rationale:
++  // A wrong implementation that re-serializes JSON with altered key order, modifies
++  // whitespace or character encoding, or introduces padding corruption during base32
++  // encoding/decoding would fail to preserve the exact byte representation of the payload.
++  // To pass, the token encoder and decoder must preserve the exact UTF-8 byte stream
++  // without losing, reordering, or adding any bytes.
++  const env = connection();
++  const rawJson = JSON.stringify(env);
++  const originalBytes = new TextEncoder().encode(rawJson);
++
++  // Encode the envelope
++  const token = encodeAgentConnectionToken(env);
++
++  // Decode the token and assert envelope equality
++  const decoded = decodeAgentConnectionToken(token);
++  assert.deepEqual(decoded, env);
++
++  // Assert the UTF-8 JSON payload bytes match byte-for-byte
++  const parts = token.split(".");
++  assert.equal(parts.length, 3);
++  const payloadBytes = base32Decode(parts[1]!);
++  assert.deepEqual(payloadBytes, originalBytes);
++
++  // Assert TextDecoder recovers the exact original JSON string
++  const recoveredJson = new TextDecoder("utf-8").decode(payloadBytes);
++  assert.equal(recoveredJson, rawJson);
++
++  // Also verify encoding a direct string payload preserves exact bytes
++  const customJson = JSON.stringify(env, null, 2);
++  const customBytes = new TextEncoder().encode(customJson);
++  const tokenFromStr = encodeAgentConnectionToken(customJson);
++  const decodedFromStr = decodeAgentConnectionToken(tokenFromStr);
++  assert.deepEqual(decodedFromStr, env);
++  const partsFromStr = tokenFromStr.split(".");
++  const payloadBytesFromStr = base32Decode(partsFromStr[1]!);
++  assert.deepEqual(payloadBytesFromStr, customBytes);
++});
++
++test("Control proving the OLD path still works: a plain JSON envelope file still sets up", async () => {
++  // 1. Write a valid plain JSON envelope to a private 0600 file in a 0700 dir.
++  // Call setupAgent with a mock/fake fetcher and verify setup succeeds.
++  const jsonDir = await mkdtemp(join(root, "json-setup-"));
++  await chmod(jsonDir, 0o700);
++  const jsonFilePath = join(jsonDir, "connection.json");
++  const env = connection();
++  await writeFile(jsonFilePath, JSON.stringify(env), { mode: 0o600 });
++
++  const jsonProfilePath = join(jsonDir, "agent", "profile.json");
++  const fake1 = mockFetcher();
++  const jsonResult = await setupAgent({
++    connectionFile: jsonFilePath,
++    profilePath: jsonProfilePath,
++    fetcher: fake1.fetcher,
++  });
++
++  assert.equal(jsonResult.connected, true);
++  assert.equal(jsonResult.principal_id, AGENT);
++  assert.equal(jsonResult.workspace_id, WS);
++  assert.equal(fake1.requests.length, 2);
++
++  // 2. Also test setupAgent with a file containing the new base32 token
++  // to prove end-to-end setup works with token files!
++  const tokenDir = await mkdtemp(join(root, "token-setup-"));
++  await chmod(tokenDir, 0o700);
++  const tokenFilePath = join(tokenDir, "connection.token");
++  const token = encodeAgentConnectionToken(env);
++  await writeFile(tokenFilePath, token, { mode: 0o600 });
++
++  const tokenProfilePath = join(tokenDir, "agent", "profile.json");
++  const fake2 = mockFetcher();
++  const tokenResult = await setupAgent({
++    connectionFile: tokenFilePath,
++    profilePath: tokenProfilePath,
++    fetcher: fake2.fetcher,
++  });
++
++  assert.equal(tokenResult.connected, true);
++  assert.equal(tokenResult.principal_id, AGENT);
++  assert.equal(tokenResult.workspace_id, WS);
++  assert.equal(fake2.requests.length, 2);
++});
++
++test("missing marker token_marker_missing", () => {
++  // Strings without the CSWARMA. marker fail with token_marker_missing
++  const invalidMarkers = [
++    "NOT_A_VALID_TOKEN",
++    "CSWARMB.ABC.DEF",
++    "CSWARM.ABC.DEF",
++    "",
++    "JUST_SOME_BASE32_STRING_234567",
++  ];
++
++  for (const raw of invalidMarkers) {
++    assert.throws(
++      () => decodeAgentConnectionToken(raw),
++      (err: unknown) => {
++        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++        assert.equal((err as AgentSetupError).code, "token_marker_missing");
++        return true;
++      },
++    );
++  }
++
++  assert.equal(isAgentConnectionToken("NOT_A_VALID_TOKEN"), false);
++  assert.equal(isAgentConnectionToken(""), false);
++});
++
++test("token_shape_invalid: incomplete token parts throw token_shape_invalid", () => {
++  const malformedTokens = [
++    "CSWARMA..",
++    "CSWARMA.",
++    "CSWARMA.ONLYONEPART",
++  ];
++
++  for (const raw of malformedTokens) {
++    assert.throws(
++      () => decodeAgentConnectionToken(raw),
++      (err: unknown) => {
++        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++        assert.equal((err as AgentSetupError).code, "token_shape_invalid");
++        return true;
++      },
++    );
++  }
++});
++
++test("token_payload_invalid: valid checksum but malformed JSON throws token_payload_invalid", () => {
++  const nonJson = new TextEncoder().encode("not valid json at all");
++  const crc = crc32(nonJson);
++  const crcBytes = Uint8Array.from([24, 16, 8, 0].map((s) => (crc >>> s) & 255));
++  const badToken = `CSWARMA.${base32Encode(nonJson)}.${base32Encode(crcBytes)}`;
++
++  assert.throws(
++    () => decodeAgentConnectionToken(badToken),
++    (err: unknown) => {
++      assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++      assert.equal((err as AgentSetupError).code, "token_payload_invalid");
++      return true;
++    },
++  );
++});
++
++test("JSON envelope containing 'cswarm' or 'cswarma' substrings must NOT be detected as token", () => {
++  const cswarmCases = [
++    connection("https://cswarm.example.com"),
++    connection("https://cswarma.example.com"),
++    connection("https://fixture.example"),
++    { ...connection(), anon_key: "cswarm-public-key" },
++  ];
++
++  for (const env of cswarmCases) {
++    const raw = JSON.stringify(env);
++    assert.equal(isAgentConnectionToken(raw), false, `expected JSON with url ${env.url} to not be detected as token`);
++    const parsed = parseAgentConnection(raw);
++    assert.equal(parsed.principal_id, AGENT);
++    assert.equal(parsed.url, env.url);
++  }
++});
++
++test("token structure fails closed on extra parts throwing token_shape_invalid", () => {
++  const env = connection();
++  const token = encodeAgentConnectionToken(env);
++
++  const extraPartVariants = [
++    `${token}.EXTRA`,
++    `${token}.foo.bar`,
++    `${token}.`,
++    `${token}..`,
++  ];
++
++  for (const variant of extraPartVariants) {
++    assert.throws(
++      () => decodeAgentConnectionToken(variant),
++      (err: unknown) => {
++        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++        assert.equal((err as AgentSetupError).code, "token_shape_invalid");
++        return true;
++      },
++    );
++
++    assert.throws(
++      () => parseAgentConnection(variant),
++      (err: unknown) => {
++        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++        assert.equal((err as AgentSetupError).code, "token_shape_invalid");
++        return true;
++      },
++    );
++  }
++});
++
++test("token structure fails closed on extra checksum characters throwing token_checksum_invalid", () => {
++  const env = connection();
++  const token = encodeAgentConnectionToken(env);
++
++  const extraChecksumCharVariants = [
++    `${token}A`,
++    `${token}EXTRA`,
++    `${token}7`,
++  ];
++
++  for (const variant of extraChecksumCharVariants) {
++    assert.throws(
++      () => decodeAgentConnectionToken(variant),
++      (err: unknown) => {
++        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++        assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
++        return true;
++      },
++    );
++
++    assert.throws(
++      () => parseAgentConnection(variant),
++      (err: unknown) => {
++        assert.ok(err instanceof AgentSetupError, `expected AgentSetupError but got ${err}`);
++        assert.equal((err as AgentSetupError).code, "token_checksum_invalid");
++        return true;
++      },
++    );
++  }
++});
++
++test("detection and decoding use the same normalization for formatting inside marker", () => {
++  const env = connection();
++  const token = encodeAgentConnectionToken(env);
++  const parts = token.split(".");
++
++  const markerVariants = [
++    `CSWA**RMA.${parts[1]}.${parts[2]}`,
++    `CSWA\nRMA.${parts[1]}.${parts[2]}`,
++    `CSWA\tRMA.${parts[1]}.${parts[2]}`,
++    `CSWARM A.${parts[1]}.${parts[2]}`,
++    `cswar**ma.${parts[1]}.${parts[2]}`,
++  ];
++
++  for (const variant of markerVariants) {
++    assert.equal(isAgentConnectionToken(variant), true, `expected isAgentConnectionToken to be true for ${variant}`);
++    const decoded = decodeAgentConnectionToken(variant);
++    assert.deepEqual(decoded, env);
++    const parsed = parseAgentConnection(variant);
++    assert.deepEqual(parsed, env);
++  }
++});
++
+diff --git a/tests/p1-cli/agent-onboarding.test.ts b/tests/p1-cli/agent-onboarding.test.ts
+index 9b87af0..91916e8 100644
+--- a/tests/p1-cli/agent-onboarding.test.ts
++++ b/tests/p1-cli/agent-onboarding.test.ts
+@@ -249,7 +249,7 @@ test("CLI setup and profile feed work against an HTTP fixture without exposing s
+         renews: true, horizonExpiresAt: null, grantKind: "standing" },
+       workspaceId: WS, workspaceName: "Fixture", deploymentUrl: url, anonKey: "public_fixture",
+     });
+-    const raw = prompt.match(/```json\n([^]*?)\n```/)?.[1];
++    const raw = prompt.match(/\bCSWARMA\.[A-Z2-7]+\.[A-Z2-7]+\b/)?.[0] ?? prompt.match(/```json\n([^]*?)\n```/)?.[1];
+     assert.ok(raw);
+     const input = await saveInput();
+     await writeFile(input, raw);

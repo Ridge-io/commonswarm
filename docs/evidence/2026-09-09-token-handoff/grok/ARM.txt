@@ -1,0 +1,143 @@
+D-036 independent arm (Grok) — lane/token-handoff
+SHA 77fe6df4fc6417690cfae55b973a65e82631babc (worktree HEAD; branch lane/token-handoff)
+base origin/main v0.1.66
+Read-only: no edits, no commits, no listener, no production (no --linked, no db push, no functions/vercel deploy, no ref ukezjcnxjvkpkeezxaew).
+
+First DIFF.patch git header (quoted before any finding):
+diff --git a/site/src/components/connect/agent-prompt.observer.test.ts b/site/src/components/connect/agent-prompt.observer.test.ts
+
+Method: read REVIEW.md + DIFF.patch; read the live files at the cited lines; probe encode/decode/parse/prompt in-process; run tests/p1-cli/agent-connection-token.test.ts (17/17 pass) and site/src/components/connect/agent-prompt.observer.test.ts (11/11 pass). Tried to refute each claim.
+
+================================================================================
+Claim 1 — Markdown immunity & browser-safe codec
+================================================================================
+Tried to refute: encoder emits `=`, `_`, `-`, `+`, `/`, or `://`; codec imports Node; agent-prompt still pulls config/node:crypto.
+
+Live encode (`src/cloud/agent-connection-codec.ts` 71–78):
+  `${TOKEN_MARKER}${base32Encode(bytes)}.${base32Encode(crcB)}`
+TOKEN_MARKER is `CSWARMA.` (lines 3–6). BASE32_ALPHABET is `ABCDEFGHIJKLMNOPQRSTUVWXYZ234567` (line 3). No padding. Probe of a real envelope: charset `/^CSWARMA\.[A-Z2-7]+\.[A-Z2-7]+$/` holds; checksum part length 7; none of `= _ - + / ://` appear in the token.
+
+Markdown immunity is decode-side stripping, not encoder alphabet. Tests that would fail a rigid parser passed: `\_` inserts, `[token](url)`, broken fences, wrap/whitespace, lowercase (agent-connection-token.test.ts 99–231).
+
+Codec imports (line 1): `import type { AgentConnectionEnvelope } from "./agent-onboarding-contract.js"` only. No `node:*`. `TextEncoder`/`Uint8Array` are Web APIs.
+
+Site entry (`site/src/components/connect/agent-prompt.ts` line 7) imports `encodeAgentConnectionToken` from `agent-connection-codec`, not `agent-connection-token`. The Node graph (`agent-connection-token.ts` → `config.js` → `node:crypto` createHash) is CLI-only. agent-onboarding-contract.ts and agent-credential-input.ts also have no `node:` imports.
+
+Could not refute. Residual: I did not re-run `npm --prefix site run build`, so I did not re-measure the Vite "node:crypto externalized" warning. The import graph of the site encoder path no longer reaches `node:crypto`.
+
+================================================================================
+Claim 2 — Fail-closed structure & canonical base32
+================================================================================
+Tried to refute: extra parts accepted; extra checksum chars accepted; final-symbol flips accepted; JSON.parse reached before checksum.
+
+`decodeAgentConnectionToken` (`src/cloud/agent-connection-token.ts`):
+  194–204  parts.length !== 3 or empty body/crc → token_shape_invalid
+  206–211  parts[2].length !== 7 → token_checksum_invalid
+  216–221  want.length !== 4 → token_checksum_invalid
+  223–228  base32Encode(want) !== parts[2] || base32Encode(body) !== parts[1] → token_checksum_invalid
+  230–238  crc32(body) !== reconstructed uint32 → token_checksum_invalid
+  240–257  UTF-8 / JSON.parse only after those checks
+
+Probe on a live token:
+  `${token}.EXTRA`, `${token}.foo.bar`, `${token}.` → token_shape_invalid
+  `${token}A`, `${token}7` → token_checksum_invalid
+  final body `U`→`V`, final crc `Q`→`R` → token_checksum_invalid
+  truncated token: JSON.parse spy count 0, code token_checksum_invalid
+
+Tests at 599–660 and 233–375 pin the same cases, including jsonParseCalls === 0.
+
+Could not refute. Scanner stops after 7 crc symbols when the next non-format char is whitespace or `) ] > ' " \`` (166–177). That ignores *later* `.EXTRA` after a newline (prose after a complete token). The claimed glued extras still fail. Not a defect in the stated contract.
+
+================================================================================
+Claim 3 — Unified normalization + `{` guard + marker formatting
+================================================================================
+Tried to refute: detect vs decode disagree; `{` JSON classified as a token; `CSWA**RMA.` / `CSWA\nRMA.` fail parseAgentConnection.
+
+`isAgentConnectionToken` (codec 63–68): trim, if startsWith `{` return false, else normalizeTokenCandidate (drop `[^A-Z2-7.]`) and includes(`CSWARMA.`).
+
+`decodeAgentConnectionToken` does **not** call normalizeTokenCandidate. Marker is a different regex (116–118) allowing only `[\s*_\\`]` between C-S-W-A-R-M-A and `.`. Body/crc then keep alphabet chars only.
+
+Claimed examples work: `CSWA**RMA.` and `CSWA\nRMA.` → detect true, decode and parseAgentConnection succeed (test 662–681; probe confirmed).
+
+Leading-`{` guard: JSON.stringify(envelope) → isAgentConnectionToken false; parseAgentConnection takes JSON.parse (agent-profile.ts 78–81). Same for url `https://cswarma.example.com` (test 582–597). Guard is on detect/parse, not on decode-direct, which is the right split.
+
+Residual (not a silent-accept defect): `CSW-ARMA.` + rest → detect true (hyphen stripped) but decode/parse throw token_marker_missing because `-` is not in the marker regex. Fail-closed. Markdown cases in the tests do not insert `-` inside the marker.
+
+Could not refute the behavioral claim. The implementations are not one shared function; they agree on the listed markdown cases and fail closed when they disagree.
+
+================================================================================
+Claim 4 — Credential safety
+================================================================================
+Tried to refute: setup argv carries the token/secret; error text echoes token, payload, or secret fields.
+
+CLI (`src/onboarding-cli.ts` 117–119): setup takes `--connection-file` (path), optional `--profile`, `--host-session-id`, `--json`. No token/payload flag. Prompt (`agent-prompt.ts` 38): `cswarm setup --connection-file <private-file> --json`. Probe: that argv line is present; prompt does not contain the raw `swm_agt_…` credential or the anon key.
+
+Token-layer messages (`agent-connection-token.ts` 38–39, 200–256) are fixed `REPAIR_USE_SETUP_FILE` ("Use ‘Use a setup file’ …"). Probe of checksum failure: message has neither the CSWARMA token, the agent_token, nor `public-fixture`.
+
+Envelope/credential faults use codes + field *names* from AGENT_CONNECTION_FIELDS / AGENT_CREDENTIAL_REQUIRED_FIELDS (generated lists, AGENTS.md enumeration rule). parseAgentCredentialInput comment (lines 96–98) says no input value is copied into an error; missing-token path interpolates `"agent_token"` as a field name, not the secret.
+
+Could not refute.
+
+================================================================================
+Claim 5 — Backward compatibility
+================================================================================
+Tried to refute: JSON files now misclassified as tokens; setupAgent/CLI only accept tokens.
+
+parseAgentConnection (agent-profile.ts 78–81): token branch only if isAgentConnectionToken; else JSON.parse(raw) and the previous envelope checks. `{` guard keeps minted JSON on the JSON path.
+
+Test "Control proving the OLD path still works" (478–520) writes a 0600 JSON file and a token file; both setupAgent calls return connected=true. That test passed here.
+
+CLI onboarding test (agent-onboarding.test.ts 252–257) now extracts a CSWARMA token from dashboardAgentPrompt, writes that file, and runs `cli(["setup", "--connection-file", input, "--profile", profile, "--json"])`. File-download prompt still says "attached connection JSON" (agent-prompt.ts 45); dashboardAgentConnection JSON is unchanged.
+
+readSecureJsonFileIfPresent (storage.ts 396–407) returns raw utf8; it does not JSON.parse, so a token file is readable.
+
+Could not refute. I did not re-run the HTTP-fixture CLI test in agent-onboarding.test.ts (needs dist/cli.js + local listener-free HTTP server). I did run the setupAgent JSON+token control.
+
+================================================================================
+Claim 6 — Host / wake / turn rules
+================================================================================
+Tried to refute: dashboardAgentPrompt dropped same-session wake, turn checks, "never start another model", or cswarm check.
+
+origin/main vs HEAD: setupPrompt lines for install, `--connection-file <private-file>`, wake/turn question, receive configure, "Never start another model to answer here.", "cswarm check before work", idle-test caveat are byte-identical. Only the one-paste *source* paragraph and the JSON fence → token payload changed (agent-prompt.ts 49–52).
+
+Observer test "both prompts require the mode choice and same-session proof, without retired workers" (61–69) still pins wakeups-in-this-session, turn start, reuse saved choice, idle test, cswarm check, and absence of retired worker/ACP strings. That test passed here. Probe: those clauses are present.
+
+"listen" is not in dashboardAgentPrompt on origin/main either; the prompt never named `cswarm listen`. Unchanged.
+
+Could not refute.
+
+================================================================================
+Claim 7 — Test discrimination & AGENTS.md / D-053
+================================================================================
+Tried to refute: branching on error.message; credential fault classified from message text; checksum tests do not prove JSON.parse was skipped; new tests unreachable.
+
+New token/codec/profile files: no `error.message` reads. Classification is AgentSetupError.code / AgentCredentialInputError.code.
+
+Credential case (agent-connection-token.test.ts 413–418): `err instanceof AgentCredentialInputError` and `err.code === "agent_credential_missing_agent_token"`. REVIEW.md's "line 356" is stale; the assertion is here, not a message fallback.
+
+Truncation (233–288) and flip (290–375) replace JSON.parse and assert jsonParseCalls === 0. Probe of a truncated token: 0 JSON.parse calls.
+
+Gates: tests/p1-cli/agent-connection-token.test.ts is reached by `test:p1-cli` glob `tests/p1-cli/**/*.test.ts` (package.json). Observer file is reached by site `src/components/**/*.observer.test.ts`. D-030 coverage test matches globs, not the literal `npm test` list; other p1-cli files (including agent-onboarding.test.ts) are the same pattern. Not a new hole.
+
+Could not refute.
+
+================================================================================
+Other notes (not FAIL)
+================================================================================
+- Duplicate envelope checks: JSON path still inline in parseAgentConnection; token path uses validateAgentConnectionEnvelope. They match today; they can drift later.
+- Observer tests decode via agent-connection-token (Node graph). Product site encode path uses codec only.
+- REVIEW.md mutation rows were not re-applied; the live predicates those rows name are present.
+
+================================================================================
+NOT established
+================================================================================
+1. Exact downstream Markdown converter in the operator Codex environment (same as REVIEW.md).
+2. Vite warning gone on a fresh `npm --prefix site run build` (import graph checked; build not re-run).
+3. Full `npm test` / `npm run build` / `scripts/build-release.sh` / commit-identity gates (REVIEW.md claims; this arm did not re-run them).
+4. Live CLI `cswarm setup` over the HTTP fixture in agent-onboarding.test.ts (code + test read; not executed here).
+5. Production or any network endpoint.
+6. A running listener (forbidden).
+
+No verified product defect in the tree at this SHA.
+
+VERDICT: PASS

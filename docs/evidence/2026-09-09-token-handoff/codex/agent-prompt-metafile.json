@@ -1,0 +1,867 @@
+{
+  "inputs": {
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/tslib/tslib.es6.mjs": {
+      "bytes": 17648,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/functions-js/dist/module/helper.js": {
+      "bytes": 203,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/functions-js/dist/module/types.js": {
+      "bytes": 2763,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/functions-js/dist/module/FunctionsClient.js": {
+      "bytes": 14041,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/tslib/tslib.es6.mjs",
+          "kind": "import-statement",
+          "original": "tslib"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/functions-js/dist/module/helper.js",
+          "kind": "import-statement",
+          "original": "./helper"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/functions-js/dist/module/types.js",
+          "kind": "import-statement",
+          "original": "./types"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/functions-js/dist/module/index.js": {
+      "bytes": 207,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/functions-js/dist/module/FunctionsClient.js",
+          "kind": "import-statement",
+          "original": "./FunctionsClient"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/functions-js/dist/module/types.js",
+          "kind": "import-statement",
+          "original": "./types"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/postgrest-js/dist/index.mjs": {
+      "bytes": 106454,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/websocket-factory.js": {
+      "bytes": 4400,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/version.js": {
+      "bytes": 483,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/constants.js": {
+      "bytes": 1010,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/version.js",
+          "kind": "import-statement",
+          "original": "./version"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/serializer.js": {
+      "bytes": 7616,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/transformers.js": {
+      "bytes": 8282,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/phoenix/priv/static/phoenix.mjs": {
+      "bytes": 56197,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/phoenix/presenceAdapter.js": {
+      "bytes": 3499,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/phoenix/priv/static/phoenix.mjs",
+          "kind": "import-statement",
+          "original": "@supabase/phoenix"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/RealtimePresence.js": {
+      "bytes": 1533,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/phoenix/presenceAdapter.js",
+          "kind": "import-statement",
+          "original": "./phoenix/presenceAdapter"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/normalizeChannelError.js": {
+      "bytes": 1168,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/phoenix/channelAdapter.js": {
+      "bytes": 3012,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/constants.js",
+          "kind": "import-statement",
+          "original": "../lib/constants"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/RealtimePostgresFilterBuilder.js": {
+      "bytes": 6872,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/RealtimeChannel.js": {
+      "bytes": 32118,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/constants.js",
+          "kind": "import-statement",
+          "original": "./lib/constants"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/RealtimePresence.js",
+          "kind": "import-statement",
+          "original": "./RealtimePresence"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/transformers.js",
+          "kind": "import-statement",
+          "original": "./lib/transformers"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/transformers.js",
+          "kind": "import-statement",
+          "original": "./lib/transformers"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/normalizeChannelError.js",
+          "kind": "import-statement",
+          "original": "./lib/normalizeChannelError"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/phoenix/channelAdapter.js",
+          "kind": "import-statement",
+          "original": "./phoenix/channelAdapter"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/RealtimePostgresFilterBuilder.js",
+          "kind": "import-statement",
+          "original": "./RealtimePostgresFilterBuilder"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/RealtimePostgresFilterBuilder.js",
+          "kind": "import-statement",
+          "original": "./RealtimePostgresFilterBuilder"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/phoenix/socketAdapter.js": {
+      "bytes": 2851,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/phoenix/priv/static/phoenix.mjs",
+          "kind": "import-statement",
+          "original": "@supabase/phoenix"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/constants.js",
+          "kind": "import-statement",
+          "original": "../lib/constants"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/RealtimeClient.js": {
+      "bytes": 25474,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/websocket-factory.js",
+          "kind": "import-statement",
+          "original": "./lib/websocket-factory"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/constants.js",
+          "kind": "import-statement",
+          "original": "./lib/constants"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/serializer.js",
+          "kind": "import-statement",
+          "original": "./lib/serializer"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/transformers.js",
+          "kind": "import-statement",
+          "original": "./lib/transformers"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/RealtimeChannel.js",
+          "kind": "import-statement",
+          "original": "./RealtimeChannel"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/phoenix/socketAdapter.js",
+          "kind": "import-statement",
+          "original": "./phoenix/socketAdapter"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/index.js": {
+      "bytes": 731,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/RealtimeClient.js",
+          "kind": "import-statement",
+          "original": "./RealtimeClient"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/RealtimeChannel.js",
+          "kind": "import-statement",
+          "original": "./RealtimeChannel"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/RealtimePresence.js",
+          "kind": "import-statement",
+          "original": "./RealtimePresence"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/lib/websocket-factory.js",
+          "kind": "import-statement",
+          "original": "./lib/websocket-factory"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/iceberg-js/dist/index.mjs": {
+      "bytes": 17187,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/storage-js/dist/index.mjs": {
+      "bytes": 109031,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/iceberg-js/dist/index.mjs",
+          "kind": "import-statement",
+          "original": "iceberg-js"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/version.js": {
+      "bytes": 483,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/constants.js": {
+      "bytes": 2222,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/version.js",
+          "kind": "import-statement",
+          "original": "./version"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/errors.js": {
+      "bytes": 9011,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/base64url.js": {
+      "bytes": 8610,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/helpers.js": {
+      "bytes": 22550,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/constants.js",
+          "kind": "import-statement",
+          "original": "./constants"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/errors.js",
+          "kind": "import-statement",
+          "original": "./errors"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/base64url.js",
+          "kind": "import-statement",
+          "original": "./base64url"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/fetch.js": {
+      "bytes": 8414,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/tslib/tslib.es6.mjs",
+          "kind": "import-statement",
+          "original": "tslib"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/constants.js",
+          "kind": "import-statement",
+          "original": "./constants"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/helpers.js",
+          "kind": "import-statement",
+          "original": "./helpers"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/errors.js",
+          "kind": "import-statement",
+          "original": "./errors"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/types.js": {
+      "bytes": 549,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/GoTrueAdminApi.js": {
+      "bytes": 40608,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/tslib/tslib.es6.mjs",
+          "kind": "import-statement",
+          "original": "tslib"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/fetch.js",
+          "kind": "import-statement",
+          "original": "./lib/fetch"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/helpers.js",
+          "kind": "import-statement",
+          "original": "./lib/helpers"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/types.js",
+          "kind": "import-statement",
+          "original": "./lib/types"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/errors.js",
+          "kind": "import-statement",
+          "original": "./lib/errors"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/local-storage.js": {
+      "bytes": 440,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/locks.js": {
+      "bytes": 15988,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/helpers.js",
+          "kind": "import-statement",
+          "original": "./helpers"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/polyfills.js": {
+      "bytes": 743,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/web3/ethereum.js": {
+      "bytes": 3108,
+      "imports": [],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/webauthn.errors.js": {
+      "bytes": 11637,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/webauthn.js",
+          "kind": "import-statement",
+          "original": "./webauthn"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/webauthn.js": {
+      "bytes": 33984,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/tslib/tslib.es6.mjs",
+          "kind": "import-statement",
+          "original": "tslib"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/base64url.js",
+          "kind": "import-statement",
+          "original": "./base64url"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/errors.js",
+          "kind": "import-statement",
+          "original": "./errors"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/helpers.js",
+          "kind": "import-statement",
+          "original": "./helpers"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/webauthn.errors.js",
+          "kind": "import-statement",
+          "original": "./webauthn.errors"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js": {
+      "bytes": 264496,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/GoTrueAdminApi.js",
+          "kind": "import-statement",
+          "original": "./GoTrueAdminApi"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/constants.js",
+          "kind": "import-statement",
+          "original": "./lib/constants"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/errors.js",
+          "kind": "import-statement",
+          "original": "./lib/errors"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/fetch.js",
+          "kind": "import-statement",
+          "original": "./lib/fetch"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/helpers.js",
+          "kind": "import-statement",
+          "original": "./lib/helpers"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/local-storage.js",
+          "kind": "import-statement",
+          "original": "./lib/local-storage"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/locks.js",
+          "kind": "import-statement",
+          "original": "./lib/locks"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/polyfills.js",
+          "kind": "import-statement",
+          "original": "./lib/polyfills"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/version.js",
+          "kind": "import-statement",
+          "original": "./lib/version"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/base64url.js",
+          "kind": "import-statement",
+          "original": "./lib/base64url"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/web3/ethereum.js",
+          "kind": "import-statement",
+          "original": "./lib/web3/ethereum"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/webauthn.js",
+          "kind": "import-statement",
+          "original": "./lib/webauthn"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/AuthAdminApi.js": {
+      "bytes": 153,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/GoTrueAdminApi.js",
+          "kind": "import-statement",
+          "original": "./GoTrueAdminApi"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/AuthClient.js": {
+      "bytes": 141,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js",
+          "kind": "import-statement",
+          "original": "./GoTrueClient"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/index.js": {
+      "bytes": 452,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/GoTrueAdminApi.js",
+          "kind": "import-statement",
+          "original": "./GoTrueAdminApi"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/GoTrueClient.js",
+          "kind": "import-statement",
+          "original": "./GoTrueClient"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/AuthAdminApi.js",
+          "kind": "import-statement",
+          "original": "./AuthAdminApi"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/AuthClient.js",
+          "kind": "import-statement",
+          "original": "./AuthClient"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/types.js",
+          "kind": "import-statement",
+          "original": "./lib/types"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/errors.js",
+          "kind": "import-statement",
+          "original": "./lib/errors"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/lib/locks.js",
+          "kind": "import-statement",
+          "original": "./lib/locks"
+        }
+      ],
+      "format": "esm"
+    },
+    "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/supabase-js/dist/index.mjs": {
+      "bytes": 37675,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/functions-js/dist/module/index.js",
+          "kind": "import-statement",
+          "original": "@supabase/functions-js"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/postgrest-js/dist/index.mjs",
+          "kind": "import-statement",
+          "original": "@supabase/postgrest-js"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/index.js",
+          "kind": "import-statement",
+          "original": "@supabase/realtime-js"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/storage-js/dist/index.mjs",
+          "kind": "import-statement",
+          "original": "@supabase/storage-js"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/index.js",
+          "kind": "import-statement",
+          "original": "@supabase/auth-js"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/realtime-js/dist/module/index.js",
+          "kind": "import-statement",
+          "original": "@supabase/realtime-js"
+        },
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/auth-js/dist/module/index.js",
+          "kind": "import-statement",
+          "original": "@supabase/auth-js"
+        }
+      ],
+      "format": "esm"
+    },
+    "site/src/lib/auth-providers.ts": {
+      "bytes": 14507,
+      "imports": [],
+      "format": "esm"
+    },
+    "supabase/functions/_shared/channels.ts": {
+      "bytes": 25439,
+      "imports": [],
+      "format": "esm"
+    },
+    "site/src/lib/composer-address.ts": {
+      "bytes": 27340,
+      "imports": [
+        {
+          "path": "supabase/functions/_shared/channels.ts",
+          "kind": "import-statement",
+          "original": "../../../supabase/functions/_shared/channels.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "site/src/lib/human-seen-reporter.ts": {
+      "bytes": 4885,
+      "imports": [],
+      "format": "esm"
+    },
+    "supabase/functions/activity/core.ts": {
+      "bytes": 3050,
+      "imports": [],
+      "format": "esm"
+    },
+    "site/src/lib/agent-activity.ts": {
+      "bytes": 6967,
+      "imports": [
+        {
+          "path": "supabase/functions/activity/core.ts",
+          "kind": "import-statement",
+          "original": "../../../supabase/functions/activity/core.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "site/src/lib/channels.ts": {
+      "bytes": 6635,
+      "imports": [
+        {
+          "path": "supabase/functions/_shared/channels.ts",
+          "kind": "import-statement",
+          "original": "../../../supabase/functions/_shared/channels.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "site/src/lib/feed-push.ts": {
+      "bytes": 9122,
+      "imports": [],
+      "format": "esm"
+    },
+    "site/src/lib/commonswarm.ts": {
+      "bytes": 99246,
+      "imports": [
+        {
+          "path": "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/site/node_modules/@supabase/supabase-js/dist/index.mjs",
+          "kind": "import-statement",
+          "original": "@supabase/supabase-js"
+        },
+        {
+          "path": "site/src/lib/auth-providers.ts",
+          "kind": "import-statement",
+          "original": "./auth-providers.js"
+        },
+        {
+          "path": "site/src/lib/composer-address.ts",
+          "kind": "import-statement",
+          "original": "./composer-address.js"
+        },
+        {
+          "path": "site/src/lib/human-seen-reporter.ts",
+          "kind": "import-statement",
+          "original": "./human-seen-reporter.js"
+        },
+        {
+          "path": "site/src/lib/agent-activity.ts",
+          "kind": "import-statement",
+          "original": "./agent-activity.js"
+        },
+        {
+          "path": "site/src/lib/channels.ts",
+          "kind": "import-statement",
+          "original": "./channels.js"
+        },
+        {
+          "path": "site/src/lib/feed-push.ts",
+          "kind": "import-statement",
+          "original": "./feed-push.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "site/src/lib/identity-label.ts": {
+      "bytes": 7755,
+      "imports": [],
+      "format": "esm"
+    },
+    "site/src/lib/agent-connect.ts": {
+      "bytes": 28456,
+      "imports": [
+        {
+          "path": "site/src/lib/commonswarm.ts",
+          "kind": "import-statement",
+          "original": "./commonswarm"
+        },
+        {
+          "path": "site/src/lib/identity-label.ts",
+          "kind": "import-statement",
+          "original": "./identity-label"
+        },
+        {
+          "path": "site/src/lib/identity-label.ts",
+          "kind": "import-statement",
+          "original": "./identity-label"
+        }
+      ],
+      "format": "esm"
+    },
+    "supabase/functions/_shared/signal-text.ts": {
+      "bytes": 1052,
+      "imports": [],
+      "format": "esm"
+    },
+    "site/src/lib/install.ts": {
+      "bytes": 2652,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/cloud/agent-onboarding-contract.ts": {
+      "bytes": 2838,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/cloud/agent-credential-input.ts": {
+      "bytes": 7525,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/cloud/agent-connection-codec.ts": {
+      "bytes": 2196,
+      "imports": [],
+      "format": "esm"
+    },
+    "site/src/components/connect/agent-prompt.ts": {
+      "bytes": 4632,
+      "imports": [
+        {
+          "path": "site/src/lib/agent-connect.ts",
+          "kind": "import-statement",
+          "original": "../../lib/agent-connect"
+        },
+        {
+          "path": "supabase/functions/_shared/signal-text.ts",
+          "kind": "import-statement",
+          "original": "../../../../supabase/functions/_shared/signal-text"
+        },
+        {
+          "path": "site/src/lib/install.ts",
+          "kind": "import-statement",
+          "original": "../../lib/install"
+        },
+        {
+          "path": "src/cloud/agent-onboarding-contract.ts",
+          "kind": "import-statement",
+          "original": "../../../../src/cloud/agent-onboarding-contract"
+        },
+        {
+          "path": "src/cloud/agent-credential-input.ts",
+          "kind": "import-statement",
+          "original": "../../../../src/cloud/agent-credential-input"
+        },
+        {
+          "path": "src/cloud/agent-connection-codec.ts",
+          "kind": "import-statement",
+          "original": "../../../../src/cloud/agent-connection-codec"
+        }
+      ],
+      "format": "esm"
+    }
+  },
+  "outputs": {
+    "../arms-77fe6df4fc6417690cfae55b973a65e82631babc/codex/agent-prompt-bundle.js": {
+      "imports": [],
+      "exports": [
+        "dashboardAgentConnection",
+        "dashboardAgentFilePrompt",
+        "dashboardAgentPrompt",
+        "promptCopyPayload"
+      ],
+      "entryPoint": "site/src/components/connect/agent-prompt.ts",
+      "inputs": {
+        "site/src/lib/auth-providers.ts": {
+          "bytesInOutput": 345
+        },
+        "supabase/functions/_shared/channels.ts": {
+          "bytesInOutput": 2080
+        },
+        "site/src/lib/agent-activity.ts": {
+          "bytesInOutput": 60
+        },
+        "site/src/lib/channels.ts": {
+          "bytesInOutput": 174
+        },
+        "site/src/lib/feed-push.ts": {
+          "bytesInOutput": 162
+        },
+        "site/src/lib/commonswarm.ts": {
+          "bytesInOutput": 53
+        },
+        "site/src/lib/agent-connect.ts": {
+          "bytesInOutput": 983
+        },
+        "supabase/functions/_shared/signal-text.ts": {
+          "bytesInOutput": 27
+        },
+        "site/src/lib/install.ts": {
+          "bytesInOutput": 312
+        },
+        "src/cloud/agent-onboarding-contract.ts": {
+          "bytesInOutput": 34
+        },
+        "src/cloud/agent-credential-input.ts": {
+          "bytesInOutput": 451
+        },
+        "src/cloud/agent-connection-codec.ts": {
+          "bytesInOutput": 1118
+        },
+        "site/src/components/connect/agent-prompt.ts": {
+          "bytesInOutput": 2725
+        }
+      },
+      "bytes": 9118
+    }
+  }
+}
