@@ -15,6 +15,12 @@ import { readSecureJsonFileIfPresent, withFileLock, writeSecureJsonFile } from "
 const exec = promisify(execFile);
 export const RECEIVE_HEARTBEAT_MAX_AGE_MS = 15_000;
 export const RECEIVE_HOOK_EVENTS = ["UserPromptSubmit", "SessionStart", "Stop"] as const;
+export const CLAUDE_MCP_CONFIG_FILE = ".mcp.json" as const;
+export const CSWARM_MCP_SERVER_NAME = "cswarm" as const;
+
+export function claudeMcpConfigPath(cwd: string): string {
+  return join(cwd, CLAUDE_MCP_CONFIG_FILE);
+}
 
 export interface ReceiveBinding {
   version: 1;
@@ -95,6 +101,7 @@ export function receiveStatus(binding: ReceiveBinding | null, now = Date.now()) 
     binding.channel_heartbeat_at !== null && now - Date.parse(binding.channel_heartbeat_at) >= 0 && now - Date.parse(binding.channel_heartbeat_at) <= RECEIVE_HEARTBEAT_MAX_AGE_MS &&
     processAlive(binding.channel_pid);
   const wakeVerified = binding?.requested_mode === "wake" && channelLive && binding?.wake_verified_at !== null;
+  const mcpPath = binding !== null ? (binding.channel_config ?? claudeMcpConfigPath(binding.cwd)) : null;
   return {
     requested_mode: binding?.requested_mode ?? null,
     effective_mode: wakeVerified ? "wake" : "turn",
@@ -104,7 +111,9 @@ export function receiveStatus(binding: ReceiveBinding | null, now = Date.now()) 
     host_session_id: binding?.host_session_id ?? null,
     next_action: binding === null ? "Ask the user to choose wakeups or turn checks, then run cswarm receive configure." :
       wakeVerified ? null : binding.requested_mode === "wake" ?
-        "Wake is not verified. Enable the configured Claude channel in this same session, run cswarm receive test, end the turn, then confirm with cswarm receive status. Use cswarm check meanwhile." :
+        (channelLive
+          ? "The Claude channel is running. Run cswarm receive test, end the turn, then confirm with cswarm receive status. Use cswarm check meanwhile."
+          : `Wake is not verified. Channel entry written to ${mcpPath}. Restart Claude Code to start the channel, run cswarm receive test, end the turn, then confirm with cswarm receive status. Use cswarm check meanwhile.`) :
         channelLive ? "Turn mode is selected; the previous channel is stopping. Confirm channel_running is false with cswarm receive status." :
         binding.hook_file !== null && binding.turn_verified_at === null ?
           "Turn hook installed but not yet run. Trust it if the host asks, then start another turn in this same session. Confirm with cswarm receive status; use cswarm check meanwhile." : null,
@@ -221,19 +230,86 @@ export async function configureAgentReceive(options: {
       binding = { ...binding, hook_file: hookFile, hook_command: command };
     }
     let startCommand: string | null = null;
-    if (options.mode === "wake") {
-      const config = join(dirname(profile), `claude-channel-${profileScopeKey(host)}.json`);
-      await writeSecureJsonFile(config, JSON.stringify({ mcpServers: {
-        cswarm: { command: options.execution.command, args: [...options.execution.args, "receive", "serve", "--profile", profile, "--host-session-id", host] },
-      } }, null, 2));
-      binding = { ...binding, channel_config: config };
-      startCommand = `claude --resume ${shellQuote(host)} --mcp-config ${shellQuote(config)} --dangerously-load-development-channels server:cswarm`;
+    if (options.mode === "wake" && provider === "claude") {
+      const mcpFile = claudeMcpConfigPath(cwd);
+      await ownedRegular(mcpFile);
+      let gitRoot: string | null = null;
+      try { gitRoot = (await exec("git", ["-C", binding.cwd, "rev-parse", "--show-toplevel"])).stdout.trim(); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT" && (error as { code?: number }).code !== 128) throw error;
+      }
+      if (gitRoot) {
+        const relative = mcpFile.startsWith(gitRoot + "/") ? mcpFile.slice(gitRoot.length + 1) : mcpFile;
+        const tracked = (await exec("git", ["-C", gitRoot, "ls-files", "--", relative])).stdout.trim();
+        if (tracked) throw new AgentSetupError("mcp_file_tracked", "The .mcp.json file is tracked by git. Use an untracked or ignored .mcp.json for local channel wakeups.");
+        await ignoreLocalHook(binding.cwd, mcpFile);
+      }
+      const lock = createHash("sha256").update(mcpFile).digest("hex");
+      await withFileLock(join(homedir(), ".cswarm", "hook-locks"), lock, async () => {
+        const before = (await ownedRegular(mcpFile)) ? await readFile(mcpFile, "utf8") : "{}";
+        let settings: Record<string, unknown>;
+        try { settings = JSON.parse(before); }
+        catch { throw new AgentSetupError("mcp_config_invalid", "The project .mcp.json file is not valid JSON. Repair it before configuring wake mode."); }
+        if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+          throw new AgentSetupError("mcp_config_invalid", "The project .mcp.json file is not valid JSON. Repair it before configuring wake mode.");
+        }
+        const mcpServers = (settings.mcpServers && typeof settings.mcpServers === "object" && !Array.isArray(settings.mcpServers))
+          ? { ...(settings.mcpServers as Record<string, unknown>) }
+          : {};
+        mcpServers[CSWARM_MCP_SERVER_NAME] = {
+          command: options.execution.command,
+          args: [...options.execution.args, "receive", "serve", "--profile", profile, "--host-session-id", host],
+        };
+        const next = `${JSON.stringify({ ...settings, mcpServers }, null, 2)}\n`;
+        if (before !== "{}" && before !== next) {
+          await writeSecureJsonFile(join(dirname(binding.profile), "hook-backups", `${lock}-${randomUUID()}.json`), before);
+        }
+        if (before !== next) {
+          const temp = `${mcpFile}.${randomUUID()}.tmp`;
+          await writeFile(temp, next, { mode: 0o600, flag: "wx" });
+          await rename(temp, mcpFile);
+        }
+      });
+      binding = { ...binding, channel_config: mcpFile };
+      startCommand = `claude --resume ${shellQuote(host)} --dangerously-load-development-channels server:cswarm`;
+    } else if (options.mode === "turn") {
+      const mcpFile = claudeMcpConfigPath(cwd);
+      if (await ownedRegular(mcpFile)) {
+        const lock = createHash("sha256").update(mcpFile).digest("hex");
+        await withFileLock(join(homedir(), ".cswarm", "hook-locks"), lock, async () => {
+          const before = await readFile(mcpFile, "utf8");
+          let settings: Record<string, unknown>;
+          try { settings = JSON.parse(before); }
+          catch { return; }
+          if (!settings || typeof settings !== "object" || Array.isArray(settings)) return;
+          const mcpServers = (settings.mcpServers && typeof settings.mcpServers === "object" && !Array.isArray(settings.mcpServers))
+            ? (settings.mcpServers as Record<string, unknown>)
+            : null;
+          if (mcpServers && CSWARM_MCP_SERVER_NAME in mcpServers) {
+            delete mcpServers[CSWARM_MCP_SERVER_NAME];
+            if (Object.keys(mcpServers).length === 0) delete settings.mcpServers;
+            const next = `${JSON.stringify(settings, null, 2)}\n`;
+            if (before !== next) {
+              if (before !== "{}") {
+                await writeSecureJsonFile(join(dirname(binding.profile), "hook-backups", `${lock}-${randomUUID()}.json`), before);
+              }
+              const temp = `${mcpFile}.${randomUUID()}.tmp`;
+              await writeFile(temp, next, { mode: 0o600, flag: "wx" });
+              await rename(temp, mcpFile);
+            }
+          }
+        });
+      }
+      binding = { ...binding, channel_config: null };
     }
     await writeSecureJsonFile(receiveBindingPath(profile, host), JSON.stringify(binding));
     return {
       ...receiveStatus(binding), profile, hook_file: binding.hook_file,
       instruction: turnCheckInstruction(profile, host),
-      ...(startCommand ? { start_command: startCommand, host_step: "Resume this same Claude session with this command and approve the channel when Claude asks. Organization policy still applies. This command does not start a separate worker." } : {}),
+      ...(startCommand ? {
+        start_command: startCommand,
+        host_step: "Resume this same Claude session with this command and approve the channel when Claude asks. Organization policy still applies. Channel entry written to " + binding.channel_config + ". This command does not start a separate worker.",
+      } : {}),
     };
   }, { timeoutMs: 2_000 });
 }
