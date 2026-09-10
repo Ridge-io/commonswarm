@@ -53,7 +53,11 @@ export const FILE_MAX_VERSION_BYTES = 25 * 1024 * 1024;
 export const FILE_WORKSPACE_MAX_BYTES = 1024 * 1024 * 1024;
 export const FILE_WORKSPACE_MAX_NAMES = 500;
 export const FILE_MAX_VERSIONS_PER_NAME = BRAIN_LIVE_VERSION_LIMIT;
-export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 30;
+// Per identity (agent principal or user) per hour, on file_create; brain topics are files,
+// so `brain put` counts too. 30 tripped on 2026-09-10 while migrating one workspace's brain
+// and files (27 topics + 32 files in one sitting). Operator ruling that day: raise it by a lot.
+// 600 keeps a runaway loop bounded (ten a minute) without touching real work.
+export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 600;
 
 export const FILE_BUCKET = "swarm-files";
 export const FILE_DOWNLOAD_URL_TTL_SECONDS = 300;
