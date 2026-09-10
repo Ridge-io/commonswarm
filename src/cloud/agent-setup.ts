@@ -25,7 +25,7 @@ export async function setupAgent(options: {
   const connectionPath = await assertPrivateLocation(options.connectionFile);
   const raw = await readSecureJsonFileIfPresent(connectionPath, ONBOARDING_MAX_FILE_BYTES);
   if (raw === null) throw new AgentSetupError("connection_missing", "Save the connection file outside repositories in a private 0700 directory, with file mode 0600, then run setup again.");
-  const connection = parseAgentConnection(raw);
+  const connection = parseAgentConnection(raw, { kind: "file", path: connectionPath });
   const profilePath = await assertPrivateLocation(options.profilePath ?? defaultAgentProfilePath(connection));
   const candidate: AgentProfile = {
     version: 1, url: connection.url, anon_key: connection.anon_key,
