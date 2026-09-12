@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
-import { AGENT_PROFILE_COMMANDS } from "./cloud/agent-onboarding-contract.js";
+import { AGENT_PROFILE_COMMANDS, isBlobBody } from "./cloud/agent-onboarding-contract.js";
 import { AgentSetupError, readAgentProfile, readProfileCredential, profileSessionContext } from "./cloud/agent-profile.js";
 import { ONBOARDING_BOOLEAN_FLAGS, ONBOARDING_VALUE_FLAGS, onboardingUsage, runOnboardingCommand } from "./onboarding-cli.js";
 import { spawnSync } from "node:child_process";
@@ -380,7 +380,7 @@ function loadHostOpenCode(): Promise<typeof import("./host/opencode.js")> {
  */
 export const KNOWN_FLAGS = new Set([
   ...ONBOARDING_BOOLEAN_FLAGS, ...ONBOARDING_VALUE_FLAGS,
-  "about", "agent-token-file", "agent-token-stdin", "all-devices", "allow-unattended", "anon-key", "attach", "branch", "capability-id",
+  "about", "agent-token-file", "agent-token-stdin", "all-devices", "allow-unattended", "anon-key", "attach", "body-file", "body-stdin", "branch", "capability-id",
   "claude-executable", "codex-executable", "confirm", "confirm-standing", "cooldown", "cwd", "defer-over", "device-id", "effort", "email",
   "epoch", "evidence", "follow", "force", "force-file-store", "foreground", "grok-executable", "head-sha",
   "broadcast-to-channel", "channel",
@@ -395,6 +395,7 @@ export const KNOWN_FLAGS = new Set([
 const BOOLEAN_FLAGS = new Set([
   ...ONBOARDING_BOOLEAN_FLAGS,
   "agent-token-stdin",
+  "body-stdin",
   "all-devices",
   "allow-unattended",
   "broadcast-to-channel",
@@ -578,6 +579,7 @@ class Arguments {
 const TARGET_FLAGS = ["url", "anon-key", "force-file-store"] as const;
 const ROUTE_FLAGS = ["workspace-id", "repo-mapping-id"] as const;
 const CREDENTIAL_FLAGS = ["agent-token-file", "agent-token-stdin"] as const;
+const BODY_FLAGS = ["body-file", "body-stdin"] as const;
 const SESSION_CONTEXT_FLAGS = ["session-context"] as const;
 const TASK_FLAGS = [
   "task-id",
@@ -606,6 +608,8 @@ class UsageError extends Error {}
 export function usage(): string {
   const agentCredential = "[--agent-token-file <path> | --agent-token-stdin]";
   const requiredAgentCredential = "(--agent-token-file <path> | --agent-token-stdin)";
+  const signalBody = '("<text>" | --body-file <path> | --body-stdin)';
+  const workingOnBody = '("<what>" | --body-file <path> | --body-stdin)';
   return `cswarm ${CLI_BUILD_VERSION} (protocol ${CLIENT_PROTOCOL_VERSION})
 
 Usage:
@@ -618,10 +622,10 @@ Usage:
   cswarm whoami ${requiredAgentCredential} [--url <url> --anon-key <key>] [--workspace-id <uuid>] [--json]
   cswarm resume --agent-token-file <path> [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
   cswarm members [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--json]
-  cswarm working-on "<what>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--about <ref>] [--channel <name>] [--until <dur>] [--json]
-  cswarm note "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--to <member|agent>] [--about <ref>] [--channel <name>] [--attach <path> ...] [--until <dur>] [--json]  # text: 1..8000 characters
-  cswarm ask "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--to <member|agent>] [--about <ref>] [--channel <name>] [--attach <path> ...] [--until <dur>] [--wait <seconds>] [--json]  # text: 1..8000 characters
-  cswarm reply <signal-id> "<text>" [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--thread [--broadcast-to-channel]] [--attach <path> ...] [--until <dur>] [--json]
+  cswarm working-on ${workingOnBody} [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--about <ref>] [--channel <name>] [--until <dur>] [--json]
+  cswarm note ${signalBody} [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--to <member|agent>] [--about <ref>] [--channel <name>] [--attach <path> ...] [--until <dur>] [--json]  # text: 1..8000 characters
+  cswarm ask ${signalBody} [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--to <member|agent>] [--about <ref>] [--channel <name>] [--attach <path> ...] [--until <dur>] [--wait <seconds>] [--json]  # text: 1..8000 characters
+  cswarm reply <signal-id> ${signalBody} [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--thread [--broadcast-to-channel]] [--attach <path> ...] [--until <dur>] [--json]
   cswarm receipt <signal-id> ${requiredAgentCredential} [--url <url> --anon-key <key>] --workspace-id <uuid> [--json]
   cswarm feed [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--about <ref>] [--kind <kind>] [--channel <name>] [--since <timestamp>] [--limit <n>] [--include-stale] [--json]
   cswarm inbox [--url <url> --anon-key <key>] [--workspace-id <uuid>] ${agentCredential} [--kind <kind>] [--about <ref>] [--channel <name>] [--since <timestamp>] [--limit <n>] [--include-stale] [--wait <seconds>] [--json]
@@ -1002,6 +1006,215 @@ async function agentCredential(
   throw new Error(
     "provide the agent credential with --agent-token-file <path> or --agent-token-stdin",
   );
+}
+
+export type BodyFileErrorCode =
+  | "body_file_missing"
+  | "body_file_unreadable";
+
+/** Gives automation a stable reason when a signal body file cannot be consumed. */
+export class BodyFileError extends Error {
+  readonly name = "BodyFileError";
+
+  constructor(readonly code: BodyFileErrorCode, message: string) {
+    super(`[${code}] ${message}`);
+  }
+}
+
+export type BodySourceErrorCode =
+  | "body_source_conflict"
+  | "body_source_missing";
+
+export class BodySourceError extends Error {
+  readonly name: string = "BodySourceError";
+
+  constructor(readonly code: BodySourceErrorCode, message: string) {
+    super(`[${code}] ${message}`);
+  }
+}
+
+export class BodySourceConflictError extends BodySourceError {
+  override readonly name: string = "BodySourceConflictError";
+
+  constructor(codeOrMessage: BodySourceErrorCode | string = "body_source_conflict", maybeMessage?: string) {
+    const code = (maybeMessage ? codeOrMessage : "body_source_conflict") as BodySourceErrorCode;
+    const message = maybeMessage ?? (codeOrMessage as string);
+    super(code, message);
+  }
+}
+
+export class BodySourceMissingError extends BodySourceError {
+  override readonly name: string = "BodySourceMissingError";
+
+  constructor(codeOrMessage: BodySourceErrorCode | string = "body_source_missing", maybeMessage?: string) {
+    const code = (maybeMessage ? codeOrMessage : "body_source_missing") as BodySourceErrorCode;
+    const message = maybeMessage ?? (codeOrMessage as string);
+    super(code, message);
+  }
+}
+
+export class BodyStdinConflictError extends Error {
+  readonly name = "BodyStdinConflictError";
+  readonly code = "body_stdin_token_stdin_conflict";
+
+  constructor(codeOrMessage: string = "body_stdin_token_stdin_conflict", maybeMessage?: string) {
+    const code = maybeMessage ? codeOrMessage : "body_stdin_token_stdin_conflict";
+    const message = maybeMessage ?? codeOrMessage;
+    super(`[${code}] ${message}`);
+  }
+}
+
+export class BodyEmptyError extends Error {
+  readonly name = "BodyEmptyError";
+  readonly code = "body_empty";
+
+  constructor(codeOrMessage: string = "body_empty", maybeMessage?: string) {
+    const code = maybeMessage ? codeOrMessage : "body_empty";
+    const message = maybeMessage ?? codeOrMessage;
+    super(`[${code}] ${message}`);
+  }
+}
+
+export class BodyStdinError extends Error {
+  readonly name = "BodyStdinError";
+
+  constructor(readonly code: string, message: string) {
+    super(`[${code}] ${message}`);
+  }
+}
+
+export const FORMAT_ADVISORY_FIELD = "format_advisory" as const;
+export const FORMAT_ADVISORY_MESSAGE =
+  "This message has no newlines and renders as one wall of text. Write Markdown to a file and post with --body-file next time.";
+
+/**
+ * Pure helper for post receipt advisory lines. When the body just posted would render
+ * as one wall of text by isBlobBody, return a calm recommendation to use --body-file.
+ * Never throws, never mutates the body.
+ */
+export function messageFormatAdvisory(body: string): string | null {
+  try {
+    if (isBlobBody(body)) {
+      return FORMAT_ADVISORY_MESSAGE;
+    }
+  } catch {
+    // Best-effort advisory: never fail the post.
+  }
+  return null;
+}
+
+/**
+ * Strips at most one trailing newline (\n or \r\n).
+ * Matches CLI behavior for text input (like shell here-docs and echo).
+ * Blank lines, indentation, and internal formatting are preserved byte-for-byte.
+ */
+export function stripSingleTrailingNewline(text: string): string {
+  if (text.endsWith("\r\n")) {
+    return text.slice(0, -2);
+  }
+  if (text.endsWith("\n")) {
+    return text.slice(0, -1);
+  }
+  return text;
+}
+
+/**
+ * Read the signal body from exactly one source: positional argv, --body-file, or --body-stdin.
+ * Preserves the payload byte-for-byte unchanged: no trimming beyond a single trailing newline,
+ * no re-wrapping, no newline normalisation, and no unescaping.
+ */
+export async function resolveSignalBody(
+  args: Arguments,
+  positionalIndex: number,
+  allowedFlags: readonly string[],
+): Promise<string> {
+  const fromFile = args.optional("body-file");
+  const fromStdin = args.has("body-stdin");
+  const hasPositional = args.positionals.length > positionalIndex;
+
+  if (fromStdin && args.has("agent-token-stdin")) {
+    throw new BodyStdinConflictError(
+      "body_stdin_token_stdin_conflict",
+      "cannot read both message body and agent credential from stdin: --body-stdin and --agent-token-stdin cannot be combined",
+    );
+  }
+
+  let sourceCount = 0;
+  if (hasPositional) sourceCount++;
+  if (fromFile !== undefined) sourceCount++;
+  if (fromStdin) sourceCount++;
+
+  const expectedPositionals = (fromFile !== undefined || fromStdin)
+    ? positionalIndex
+    : positionalIndex + 1;
+
+  if (sourceCount > 1) {
+    throw new BodySourceConflictError(
+      "body_source_conflict",
+      "use exactly one body source: positional text, --body-file, or --body-stdin",
+    );
+  }
+  if (sourceCount === 0) {
+    throw new BodySourceMissingError(
+      "body_source_missing",
+      `too few positional arguments: expected ${expectedPositionals}, received ${args.positionals.length} (provide the message body as positional text, --body-file <path>, or --body-stdin)`,
+    );
+  }
+
+  args.assertShape(allowedFlags, expectedPositionals);
+
+  let raw: string;
+  if (fromFile !== undefined) {
+    try {
+      raw = readFileSync(fromFile, "utf8");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (code === "ENOENT") {
+        throw new BodyFileError(
+          "body_file_missing",
+          `--body-file does not exist: ${fromFile}`,
+        );
+      }
+      const detail = error instanceof Error ? error.message : "unknown read failure";
+      throw new BodyFileError(
+        "body_file_unreadable",
+        `could not read --body-file ${fromFile}: ${detail}`,
+      );
+    }
+    raw = stripSingleTrailingNewline(raw);
+  } else if (fromStdin) {
+    if (process.stdin.isTTY) {
+      throw new BodyStdinError(
+        "body_stdin_tty",
+        "--body-stdin requires piped input; it is never accepted from a terminal",
+      );
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    raw = stripSingleTrailingNewline(Buffer.concat(chunks).toString("utf8"));
+  } else {
+    raw = stripSingleTrailingNewline(args.positionals[positionalIndex]!);
+  }
+
+  if (fromFile !== undefined || fromStdin) {
+    if (raw.trim().length === 0) {
+      throw new BodyEmptyError(
+        "body_empty",
+        "signal body cannot be empty or contain only whitespace",
+      );
+    }
+  } else {
+    if (raw.trim().length === 0 && raw.length > 0) {
+      throw new BodyEmptyError(
+        "body_empty",
+        "signal body cannot be empty or contain only whitespace",
+      );
+    }
+  }
+
+  return signalText(raw, "body");
 }
 
 async function invitationCredential(args: Arguments): Promise<string> {
@@ -3107,10 +3320,11 @@ async function runPostSignal(
 ): Promise<void> {
   const allowTo = kind !== "working-on";
   const allowWait = kind === "ask";
-  args.assertShape([
+  const allowedFlags = [
     ...TARGET_FLAGS,
     "workspace-id",
     ...CREDENTIAL_FLAGS,
+    ...BODY_FLAGS,
     ...(allowTo ? ["to"] : []),
     "about",
     "channel",
@@ -3119,7 +3333,8 @@ async function runPostSignal(
     ...(allowTo ? ["attach"] : []),
     "json",
     ...SESSION_CONTEXT_FLAGS,
-  ], 2);
+  ];
+  const body = await resolveSignalBody(args, 1, allowedFlags);
   /* Checked before the target, the credential, or any upload: a name that
    * cannot be a channel name costs nothing to refuse here, and the sentence is
    * the one the server would have sent. */
@@ -3169,7 +3384,7 @@ async function runPostSignal(
   const command: PostSignalCommand = {
     kind: "post_signal",
     signal_kind: kind,
-    body: signalText(args.positionals[1]!, "body"),
+    body,
     ...postSignalTargets(recipient),
     about: args.optional("about") === undefined
       ? null
@@ -3192,6 +3407,7 @@ async function runPostSignal(
     throw error;
   }
   const signal = result.response.signal!;
+  const formatAdvisory = messageFormatAdvisory(signal.body);
 
   if (waitSeconds !== undefined) {
     const credentialForRead = signalCredentialOf(credential);
@@ -3218,6 +3434,7 @@ async function runPostSignal(
     if (args.has("json")) {
       printJson({
         ...askWaitJsonPayload(signal, reply, waitResult.timedOut),
+        ...(formatAdvisory !== null ? { [FORMAT_ADVISORY_FIELD]: formatAdvisory } : {}),
         retried: result.retried,
         attempts: result.attempts,
       });
@@ -3238,7 +3455,7 @@ async function runPostSignal(
             includeStale: true,
             authors,
           })
-        }\n`,
+        }\n${formatAdvisory !== null ? `\n${formatAdvisory}\n` : ""}`,
       );
       return;
     }
@@ -3249,7 +3466,7 @@ async function runPostSignal(
           includeStale: true,
           authors,
         })
-      }\n`,
+      }\n${formatAdvisory !== null ? `\n${formatAdvisory}\n` : ""}`,
     );
     return;
   }
@@ -3260,6 +3477,7 @@ async function runPostSignal(
       message:
         "Signal shared. It is immutable, tenancy-scoped, and will quietly expire at its horizon.",
       signal,
+      ...(formatAdvisory !== null ? { [FORMAT_ADVISORY_FIELD]: formatAdvisory } : {}),
       retried: result.retried,
       attempts: result.attempts,
     });
@@ -3326,7 +3544,7 @@ async function runPostSignal(
       raced.length === 0 ? "" : `\nSomeone else announced in the two minutes before you, which you could not have seen when you read the feed:\n${
         renderSignals(raced, { inbox: false, includeStale: true, authors })
       }\nCheck whether you are about to do the same work.\n`
-    }`,
+    }${formatAdvisory !== null ? `\n${formatAdvisory}\n` : ""}`,
   );
 }
 
@@ -3390,17 +3608,18 @@ export function threadReplyMessage(
 }
 
 async function runReply(args: Arguments): Promise<void> {
-  args.assertShape([
+  const allowedFlags = [
     ...TARGET_FLAGS,
     "workspace-id",
     ...CREDENTIAL_FLAGS,
+    ...BODY_FLAGS,
     "attach",
     "broadcast-to-channel",
     "thread",
     "until",
     "json",
     ...SESSION_CONTEXT_FLAGS,
-  ], 3);
+  ];
   const inThread = args.has("thread");
   const broadcastToChannel = args.has("broadcast-to-channel");
   if (broadcastToChannel && !inThread) {
@@ -3415,10 +3634,7 @@ async function runReply(args: Arguments): Promise<void> {
   if (signalId === undefined || !UUID_RE.test(signalId)) {
     throw new Error("reply requires the signal UUID being answered");
   }
-  const body = args.positionals[2];
-  if (body === undefined) {
-    throw new Error("reply requires the reply text");
-  }
+  const body = await resolveSignalBody(args, 2, allowedFlags);
   const preparedAttachments = prepareSignalAttachments(args.all("attach"));
   const cloud = await target(args);
   const credential = await commandWorkspaceAndCredential(args, cloud, {
@@ -3444,7 +3660,7 @@ async function runReply(args: Arguments): Promise<void> {
   const command: PostSignalCommand = {
     kind: "post_signal",
     signal_kind: "note",
-    body: signalText(body, "body"),
+    body,
     to_user_id: null,
     to_agent_principal_id: null,
     in_reply_to: inThread ? null : signalId.toLowerCase(),
@@ -3474,6 +3690,7 @@ async function runReply(args: Arguments): Promise<void> {
     throw error;
   }
   const signal = result.response.signal!;
+  const formatAdvisory = messageFormatAdvisory(signal.body);
   const replyMessage = threadReplyMessage(signal, {
     inThread,
     broadcastToChannel,
@@ -3485,6 +3702,7 @@ async function runReply(args: Arguments): Promise<void> {
         ? replyMessage
         : "Reply shared. It is immutable, tenancy-scoped, and will quietly expire at its horizon.",
       signal,
+      ...(formatAdvisory !== null ? { [FORMAT_ADVISORY_FIELD]: formatAdvisory } : {}),
       retried: result.retried,
       attempts: result.attempts,
     });
@@ -3504,7 +3722,7 @@ async function runReply(args: Arguments): Promise<void> {
         includeStale: true,
         authors,
       })
-    }\n`,
+    }\n${formatAdvisory !== null ? `\n${formatAdvisory}\n` : ""}`,
   );
 }
 
