@@ -78,3 +78,19 @@ test("the file-artifacts design doc publishes the enforced hourly cap", () => {
   assert.equal(Number(documented), Number(enforced),
     `docs/design/2026-08-18-FILE-ARTIFACTS.md documents ${documented}/hour; the edge enforces ${enforced}`);
 });
+
+/* Codex's checker arm, round three: the comment claims a REFUSED create still spends from the
+ * bucket. That is only true while the bucket increment precedes the create call, and no control
+ * bound the ordering — moving validation above the bucket block left every other gate green. */
+
+test("the rate bucket is spent before the create runs, so refusals count", () => {
+  const index = read("supabase/functions/command/index.ts");
+  const bucket = index.indexOf("`file:create:${auth.credentialKind}:${rateIdentity}`");
+  const create = index.indexOf("fileVersionCreate", bucket === -1 ? 0 : bucket);
+  assert.ok(bucket > 0, "the file-create rate bucket key is gone; the comment above the constant describes it");
+  assert.ok(
+    create > bucket,
+    "fileVersionCreate now runs before the file:create rate bucket is incremented, so a refused "
+      + "attempt no longer spends from it — the comment on FILE_CREATE_RATE_LIMIT_PER_HOUR says it does",
+  );
+});

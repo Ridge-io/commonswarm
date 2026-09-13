@@ -87,7 +87,7 @@ size is only known once the bytes are there (`file-artifacts.ts`, `objectSize` a
 | per-file (per version) | 25 MB | covers every named review target (md, docx, xlsx, pdf, images) with room; keeps a single signed upload comfortably inside one request and bounds the blast radius of a mistake |
 | per-workspace total | 1 GB | ~40× the per-file cap; a coordination store, not a drive. Free-tier arithmetic: 10 workspaces per account stays bounded |
 | per-workspace file count | 500 names; normal files keep 20 live or in-flight versions per name; brain topics keep a rolling 20 live versions | keeps `file ls` bounded without forcing a living brain topic to change its name |
-| upload rate | 600 version-creates per principal per hour | same family as existing signal rate limits. Raised from 30 on 2026-09-12 by operator ruling after 30 stopped a workspace migration. It is a FIXED clock-hour bucket, so it bounds grants per hour, not pace, and allows a double burst across an hour boundary; the byte and name caps above are what bound what can sit |
+| upload rate | 600 version-creates per principal per hour | same family as existing signal rate limits. Raised from 30 by operator ruling of 2026-09-10, after 30 stopped a workspace migration; landed 2026-09-12. It is a FIXED clock-hour bucket, so it bounds grants per hour, not pace, and allows a double burst across an hour boundary; the byte and name caps above are what bound what can sit |
 
 Exceeding a cap is a refusal with the number in it ("this file is 31 MB; the per-file limit
 is 25 MB"), not a bare status.

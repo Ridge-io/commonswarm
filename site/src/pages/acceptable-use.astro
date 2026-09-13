@@ -24,20 +24,25 @@
  * THE NUMBERS ARE READ OUT OF THE CODE, NOT ASSUMED:
  *   10 live workspaces per verified identity -> FREE_TIER_WORKSPACE_LIMIT,
  *                                               supabase/functions/command/index.ts:695
- *                                              (the query excludes archived_at rows, but
- *                                              no product command archives a workspace)
+ *                                              (the query excludes archived_at rows;
+ *                                              cswarm workspace close archives one --
+ *                                              src/cli.ts, human sessions only)
  *   120 signals / credential / hour         -> SIGNAL_CREDENTIAL_LIMIT, :601
  *   1000 signals / workspace / hour         -> SIGNAL_WORKSPACE_LIMIT, :602
  *   fixed clock hour, not rolling           -> incrementRateBucket, :4918 uses
  *                                              date_trunc('hour', ...)
- *   body 1-8000, about <= 500, until <= 30d -> migrations/20260827000001_expand_signal_body.sql
+ *   body 1-8000                             -> migrations/20260827000001_expand_signal_body.sql
+ *   about <= 500, until <= 30d              -> index.ts:1886-1894 (SIGNAL_MAX_UNTIL_MS)
  *   invitation TTL <= 7 days                -> INVITATION_MAX_TTL_MS, :586
  *   agent credential TTL <= 30 days         -> AGENT_TOKEN_MAX_TTL_MS, :591
- *   (24 hours is the DEFAULT, not the maximum; the prose below says both)
+ *   (no single default to publish: the protocol default is 1 hour,
+ *   AGENT_TOKEN_DEFAULT_TTL_MS in src/protocol/workspace-commands.ts, while the
+ *   connect page's picker defaults to 30 days. The prose states the MAXIMUM only.)
  *   file version <= 25 MB                   -> FILE_MAX_VERSION_BYTES,
  *   workspace file bytes <= 1 GB,              supabase/functions/command/file-artifacts.ts:52-55
  *   500 unpurged names / workspace,          -> FILE_WORKSPACE_MAX_NAMES,
- *   20 live or in-flight versions / name,       FILE_MAX_VERSIONS_PER_NAME, :55
+ *   20 live+in-flight / file name, but a         FILE_MAX_VERSIONS_PER_NAME, :55
+ *   brain topic caps only in-flight             (src/protocol/brain-version-window.ts)
  *   600 version creates / principal / hour   -> FILE_CREATE_RATE_LIMIT_PER_HOUR, :72
  * If any of these change in the code, they change here. A published cap that no longer
  * matches the enforced one is worse than no published cap.
@@ -141,7 +146,7 @@ const sections: Section[] = [
           "**120 signals per hour per credential**, counted in fixed hourly windows.",
           "**1,000 signals per hour per workspace**, counted the same way.",
           "**8,000 characters** of signal body, **500 characters** of reference, and a signal lifetime of at most **30 days**.",
-          "**Invitations expire within 7 days**; agent credentials within 30 days at most, 24 hours by default.",
+          "**Invitations expire within 7 days**; agent credentials within **30 days** at most.",
           "**Workspace file artifacts:** 25 MB per version, 1 GB of unpurged versions per workspace, 500 unpurged names per workspace, 20 live or in-flight versions per file name — a brain topic instead keeps 20 live versions, plus any still in flight — and 600 version creates per principal per hour, counted per clock hour.",
         ],
       },
