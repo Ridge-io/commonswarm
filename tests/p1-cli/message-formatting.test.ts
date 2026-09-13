@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -40,7 +41,9 @@ import {
   formatBodyUsage,
   formatOrList,
   messageFormatAdvisory,
+  postSignalAllowedFlags,
   readBoundedUtf8Stream,
+  replyAllowedFlags,
   resolveSignalBody,
   stripSingleTrailingNewline,
   usage,
@@ -198,6 +201,14 @@ test("messageFormatAdvisory: emits advisory only for blobs and never throws", ()
   assert.equal(messageFormatAdvisory("x".repeat(500) + "\n"), null);
   assert.equal(messageFormatAdvisory(""), null);
   assert.equal(FORMAT_ADVISORY_FIELD, "format_advisory");
+
+  // Protective catch verification: must catch if inspection throws and return null without failing
+  const throwingInspector = () => {
+    throw new Error("simulated body inspector explosion");
+  };
+  assert.doesNotThrow(() => {
+    assert.equal(messageFormatAdvisory("x".repeat(500), throwingInspector), null);
+  });
 });
 
 test("typed error classes: export codes and retain error hierarchies", () => {
@@ -430,29 +441,82 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
 
   assert.match(
     cliSource,
-    /async\s+function\s+runPostSignal\([\s\S]*?const\s+allowedFlags\s*=\s*\[[\s\S]*?\.\.\.BODY_FLAGS,/,
-    "runPostSignal allowedFlags must spread ...BODY_FLAGS",
+    /export\s+function\s+postSignalAllowedFlags\([\s\S]*?\[[\s\S]*?\.\.\.BODY_FLAGS,/,
+    "postSignalAllowedFlags must spread ...BODY_FLAGS",
   );
   assert.match(
     cliSource,
-    /async\s+function\s+runReply\([\s\S]*?const\s+allowedFlags\s*=\s*\[[\s\S]*?\.\.\.BODY_FLAGS,/,
-    "runReply allowedFlags must spread ...BODY_FLAGS",
+    /export\s+function\s+replyAllowedFlags\([\s\S]*?\[[\s\S]*?\.\.\.BODY_FLAGS,/,
+    "replyAllowedFlags must spread ...BODY_FLAGS",
+  );
+  assert.match(
+    cliSource,
+    /async\s+function\s+runPostSignal\([\s\S]*?const\s+allowedFlags\s*=\s*postSignalAllowedFlags\(/,
+    "runPostSignal must use postSignalAllowedFlags",
+  );
+  assert.match(
+    cliSource,
+    /async\s+function\s+runReply\([\s\S]*?const\s+allowedFlags\s*=\s*replyAllowedFlags\(/,
+    "runReply must use replyAllowedFlags",
   );
 
-  for (const flag of BODY_FLAGS) {
-    assert.ok(
-      KNOWN_FLAGS.has(flag),
-      `KNOWN_FLAGS must contain every flag in BODY_FLAGS: missing ${flag}`,
+  // Static AST check: allowedFlags definitions must not contain hardcoded body-* flags
+  for (const fn of ["postSignalAllowedFlags", "replyAllowedFlags"]) {
+    const fnMatch = cliSource.match(
+      new RegExp(`export\\s+function\\s+${fn}\\b[\\s\\S]*?return\\s*\\[([\\s\\S]*?)\\];`),
     );
-  }
-  for (const flag of BODY_BOOLEAN_FLAGS) {
-    assert.ok(
-      BOOLEAN_FLAGS.has(flag),
-      `BOOLEAN_FLAGS must contain every flag in BODY_BOOLEAN_FLAGS: missing ${flag}`,
+    assert.ok(fnMatch, `${fn} definition must be found in src/cli.ts`);
+    const extraBodyFlags = [...fnMatch[1].matchAll(/['"`](body-[^'"`]+)['"`]/g)].map((m) => m[1]);
+    assert.deepEqual(
+      extraBodyFlags,
+      [],
+      `${fn} must not contain hardcoded body flags: ${extraBodyFlags.join(", ")}`,
     );
   }
 
-  // Contracted body sources must be present
+  const declaredBodyFlags = [...BODY_FLAGS].sort();
+  const declaredBooleanBodyFlags = [...BODY_BOOLEAN_FLAGS].sort();
+
+  // Two-way equality between command allowedFlags and BODY_FLAGS
+  for (const kind of ["note", "ask", "working-on"] as const) {
+    const postBodyFlags = postSignalAllowedFlags(kind).filter((f) => f.startsWith("body-")).sort();
+    assert.deepEqual(
+      postBodyFlags,
+      declaredBodyFlags,
+      `postSignalAllowedFlags(${kind}) body flags must equal BODY_FLAGS exactly in both directions`,
+    );
+  }
+  const replyBodyFlags = replyAllowedFlags().filter((f) => f.startsWith("body-")).sort();
+  assert.deepEqual(
+    replyBodyFlags,
+    declaredBodyFlags,
+    "replyAllowedFlags body flags must equal BODY_FLAGS exactly in both directions",
+  );
+
+  // Two-way equality between KNOWN_FLAGS / BOOLEAN_FLAGS and BODY_FLAGS
+  const parserKnownBodyFlags = [...KNOWN_FLAGS].filter((f) => f.startsWith("body-")).sort();
+  assert.deepEqual(
+    parserKnownBodyFlags,
+    declaredBodyFlags,
+    "parser KNOWN_FLAGS body flags must equal BODY_FLAGS exactly in both directions",
+  );
+
+  const parserBooleanBodyFlags = [...BOOLEAN_FLAGS].filter((f) => f.startsWith("body-")).sort();
+  assert.deepEqual(
+    parserBooleanBodyFlags,
+    declaredBooleanBodyFlags,
+    "parser BOOLEAN_FLAGS body flags must equal BODY_BOOLEAN_FLAGS exactly in both directions",
+  );
+
+  // Contracted body sources must be present and follow body- flag naming
+  for (const source of BODY_SOURCES) {
+    if (source.kind === "flag") {
+      assert.ok(
+        typeof source.flag === "string" && source.flag.startsWith("body-"),
+        `flag source ${source.name} must have a flag starting with "body-": ${source.flag}`,
+      );
+    }
+  }
   assert.ok(
     BODY_FLAGS.includes("body-file"),
     "BODY_FLAGS must include contracted flag body-file",
@@ -469,7 +533,7 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
   // 3. Parser recognition: accepts all declared body flags and rejects unknown body flags
   for (const flag of BODY_FLAGS) {
     const source = BODY_SOURCES.find((s) => s.kind === "flag" && s.flag === flag);
-    assert.ok(source, `every BODY_FLAG must correspond to a flag source entry`);
+    assert.ok(source, `every BODY_FLAG must correspond to a flag source entry: ${flag}`);
     if (source.boolean) {
       const parsed = new Arguments(["note", `--${flag}`]);
       assert.equal(parsed.has(flag), true);
@@ -484,14 +548,31 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
   );
 
   // Parser acceptance enforcement: unallowed flags are rejected by assertShape in resolveSignalBody
-  const unallowedArgs = new Arguments(["note", "positional body", "--unallowed-extra-flag", "x"]);
+  const unallowedPostArgs = new Arguments(["note", "positional body", "--body-shadow", "x"]);
   await assert.rejects(
-    () => resolveSignalBody(unallowedArgs, 1, ["workspace-id", ...BODY_FLAGS]),
+    () => resolveSignalBody(unallowedPostArgs, 1, postSignalAllowedFlags("note")),
     (err: any) => {
-      assert.match(err.message, /unknown option: --unallowed-extra-flag/);
+      assert.match(err.message, /unknown option: --body-shadow/);
       return true;
     },
   );
+  const unallowedReplyArgs = new Arguments(["reply", SIGNAL_ID, "positional body", "--body-shadow", "x"]);
+  await assert.rejects(
+    () => resolveSignalBody(unallowedReplyArgs, 2, replyAllowedFlags()),
+    (err: any) => {
+      assert.match(err.message, /unknown option: --body-shadow/);
+      return true;
+    },
+  );
+
+  // Command acceptance verification through CLI: unallowed body flags are rejected with unknown option error
+  const unallowedNoteRes = await runCli(["note", "positional text", "--body-shadow", "val"]);
+  assert.equal(unallowedNoteRes.code, 1);
+  assert.match(unallowedNoteRes.stderr, /unknown option: --body-shadow/);
+
+  const unallowedReplyRes = await runCli(["reply", SIGNAL_ID, "positional text", "--body-shadow", "val"]);
+  assert.equal(unallowedReplyRes.code, 1);
+  assert.match(unallowedReplyRes.stderr, /unknown option: --body-shadow/);
 
   // 4. Runtime dispatch verification: resolveSignalBody dispatches through activeSources[0].read
   const resolveBodyMatch = cliSource.match(
@@ -512,74 +593,6 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
     "resolveSignalBody must not contain hardcoded fromFile or fromStdin branches",
   );
 
-  // Test runtime dispatch across EVERY source in BODY_SOURCES (positional, body-file, body-stdin)
-  for (let i = 0; i < BODY_SOURCES.length; i++) {
-    const source = BODY_SOURCES[i]!;
-    const originalRead = source.read;
-    let spyDispatched = false;
-    (source as any).read = () => {
-      spyDispatched = true;
-      return `dispatched-from-${source.name}`;
-    };
-    try {
-      const spyArgs =
-        source.name === "positional"
-          ? new Arguments(["note", "pos-value"])
-          : source.boolean
-          ? new Arguments(["note", `--${source.flag}`])
-          : new Arguments(["note", `--${source.flag}`, "flag-val"]);
-      const dispatchedBody = await resolveSignalBody(spyArgs, 1, [
-        "workspace-id",
-        ...BODY_FLAGS,
-      ]);
-      assert.equal(
-        spyDispatched,
-        true,
-        `resolveSignalBody must dispatch to source ${source.name}.read`,
-      );
-      assert.equal(
-        dispatchedBody,
-        `dispatched-from-${source.name}`,
-        `resolveSignalBody must return result of source ${source.name}.read`,
-      );
-    } finally {
-      (source as any).read = originalRead;
-    }
-  }
-
-  // Runtime dispatch for dynamic source: prove new source routes to its .read member
-  const customSource = {
-    name: "body-custom-dispatch",
-    kind: "flag" as const,
-    flag: "body-custom-dispatch",
-    boolean: true,
-    conflictLabel: "--body-custom-dispatch",
-    missingLabel: "--body-custom-dispatch",
-    usageToken: () => "--body-custom-dispatch",
-    isPresent: (args: Arguments) => args.has("body-custom-dispatch"),
-    read: () => "custom-dispatched-body",
-  };
-  (BODY_SOURCES as any).push(customSource);
-  KNOWN_FLAGS.add("body-custom-dispatch");
-  BOOLEAN_FLAGS.add("body-custom-dispatch");
-  try {
-    const customArgs = new Arguments(["note", "--body-custom-dispatch"]);
-    const customBody = await resolveSignalBody(customArgs, 1, [
-      "workspace-id",
-      ...BODY_FLAGS,
-      "body-custom-dispatch",
-    ]);
-    assert.equal(
-      customBody,
-      "custom-dispatched-body",
-      "resolveSignalBody must dispatch to newly added source .read",
-    );
-  } finally {
-    (BODY_SOURCES as any).pop();
-    KNOWN_FLAGS.delete("body-custom-dispatch");
-    BOOLEAN_FLAGS.delete("body-custom-dispatch");
-  }
-
   // 5. Runtime behavior: every entry in BODY_SOURCES has a wired reader and can supply a body end to end
   const dir = await mkdtemp(resolve(tmpdir(), "cswarm-msgfmt-gate-"));
   try {
@@ -590,38 +603,62 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
         `source ${source.name} must have a wired read function on its BODY_SOURCES entry`,
       );
 
+      // Exercise every source through its real wired reader with distinctive payloads.
+      // We test with two distinct payloads to ensure stubs returning constants fail.
       if (source.name === "positional") {
-        const args = new Arguments(["note", "gate positional body"]);
-        const body = await resolveSignalBody(args, 1, ["workspace-id", ...BODY_FLAGS]);
-        assert.equal(body, "gate positional body");
+        const payload1 = `distinctive-pos-alpha-${randomUUID()}`;
+        const payload2 = `distinctive-pos-beta-${randomUUID()}`;
+        const body1 = await resolveSignalBody(new Arguments(["note", payload1]), 1, postSignalAllowedFlags("note"));
+        assert.equal(body1, payload1, "positional reader must return payload 1 exactly byte for byte");
+        const body2 = await resolveSignalBody(new Arguments(["note", payload2]), 1, postSignalAllowedFlags("note"));
+        assert.equal(body2, payload2, "positional reader must return payload 2 exactly byte for byte");
       } else if (source.name === "body-file") {
-        const tmpFile = resolve(dir, "body-file.txt");
-        await writeFile(tmpFile, "gate file body\n");
-        const args = new Arguments(["note", "--body-file", tmpFile]);
-        const body = await resolveSignalBody(args, 1, ["workspace-id", ...BODY_FLAGS]);
-        assert.equal(body, "gate file body");
+        const payload1 = `distinctive-file-alpha-${randomUUID()}\n# Markdown header\nSecond line`;
+        const payload2 = `distinctive-file-beta-${randomUUID()}\nAnother line\nFinal line`;
+        const file1 = resolve(dir, "body-file-1.txt");
+        const file2 = resolve(dir, "body-file-2.txt");
+        await writeFile(file1, payload1 + "\n");
+        await writeFile(file2, payload2 + "\n");
+        const body1 = await resolveSignalBody(new Arguments(["note", "--body-file", file1]), 1, postSignalAllowedFlags("note"));
+        assert.equal(body1, payload1, "body-file reader must return file payload 1 exactly byte for byte");
+        const body2 = await resolveSignalBody(new Arguments(["note", "--body-file", file2]), 1, postSignalAllowedFlags("note"));
+        assert.equal(body2, payload2, "body-file reader must return file payload 2 exactly byte for byte");
       } else if (source.usesStdin) {
-        // Direct stream reading test on stdin source
-        const streamResult = await source.read(
+        const streamPayload1 = `distinctive-stdin-alpha-${randomUUID()}\nLine 1\nLine 2`;
+        const streamPayload2 = `distinctive-stdin-beta-${randomUUID()}\nDifferent line 1\nDifferent line 2`;
+        const streamResult1 = await source.read(
           new Arguments(["note", `--${source.flag}`]),
           1,
-          Readable.from([Buffer.from("gate direct stream body\n")]),
+          Readable.from([Buffer.from(streamPayload1 + "\n")]),
         );
-        assert.equal(streamResult, "gate direct stream body");
+        assert.equal(streamResult1, streamPayload1, `${source.name} reader must return stream payload 1 exactly byte for byte`);
+        const streamResult2 = await source.read(
+          new Arguments(["note", `--${source.flag}`]),
+          1,
+          Readable.from([Buffer.from(streamPayload2 + "\n")]),
+        );
+        assert.equal(streamResult2, streamPayload2, `${source.name} reader must return stream payload 2 exactly byte for byte`);
       } else {
-        // Any newly added non-stdin source must supply a valid non-empty body when invoked
-        const args = source.boolean
-          ? new Arguments(["note", `--${source.flag}`])
-          : new Arguments(["note", `--${source.flag}`, "test-input"]);
-        const body = await resolveSignalBody(args, 1, ["workspace-id", ...BODY_FLAGS]);
-        assert.ok(typeof body === "string" && body.length > 0);
+        // Any newly added non-stdin source must take a value argument and supply its input
+        assert.ok(
+          !source.boolean,
+          `non-stdin flag source ${source.name} cannot be boolean (a body source must accept input)`,
+        );
+        const payload1 = `distinctive-flag-alpha-${randomUUID()}`;
+        const payload2 = `distinctive-flag-beta-${randomUUID()}`;
+        const args1 = new Arguments(["note", `--${source.flag}`, payload1]);
+        const body1 = await resolveSignalBody(args1, 1, postSignalAllowedFlags("note"));
+        const args2 = new Arguments(["note", `--${source.flag}`, payload2]);
+        const body2 = await resolveSignalBody(args2, 1, postSignalAllowedFlags("note"));
+        assert.equal(body1, payload1, `source ${source.name} reader must return payload 1 exactly byte for byte`);
+        assert.equal(body2, payload2, `source ${source.name} reader must return payload 2 exactly byte for byte`);
       }
     }
 
-    // body-stdin supplies body end to end through the CLI process
-    let receivedStdinBody = "";
+    // Every source supplies body end to end through the CLI process against mock cloud server
+    let receivedBody = "";
     const server = createMockCloudServer((cmd) => {
-      receivedStdinBody = cmd.body;
+      receivedBody = cmd.body;
     });
     await new Promise<void>((res, rej) => {
       server.once("error", rej);
@@ -642,9 +679,36 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
         credPath,
         "--json",
       ];
-      const result = await runCli(["note", "--body-stdin", ...target], "gate stdin body\n");
-      assert.equal(result.code, 0, result.stderr);
-      assert.equal(receivedStdinBody, "gate stdin body");
+
+      for (const source of BODY_SOURCES) {
+        if (source.name === "positional") {
+          const cliPosPayload = `cli-pos-e2e-${randomUUID()}`;
+          receivedBody = "";
+          const result = await runCli(["note", cliPosPayload, ...target], AGENT_TOKEN);
+          assert.equal(result.code, 0, result.stderr);
+          assert.equal(receivedBody, cliPosPayload, "positional source must supply body end to end through CLI");
+        } else if (source.name === "body-file") {
+          const cliFilePayload = `cli-file-e2e-${randomUUID()}\n# File content\nLine two`;
+          const cliFilePath = resolve(dir, "cli-body-file.md");
+          await writeFile(cliFilePath, cliFilePayload + "\n", "utf8");
+          receivedBody = "";
+          const result = await runCli(["note", "--body-file", cliFilePath, ...target], AGENT_TOKEN);
+          assert.equal(result.code, 0, result.stderr);
+          assert.equal(receivedBody, cliFilePayload, "body-file source must supply body end to end through CLI");
+        } else if (source.usesStdin) {
+          const cliStdinPayload = `cli-stdin-e2e-${randomUUID()}\nStream line A\nStream line B`;
+          receivedBody = "";
+          const result = await runCli(["note", `--${source.flag}`, ...target], cliStdinPayload + "\n");
+          assert.equal(result.code, 0, result.stderr);
+          assert.equal(receivedBody, cliStdinPayload, `${source.name} source must supply body end to end through CLI`);
+        } else {
+          const cliValPayload = `cli-val-e2e-${randomUUID()}`;
+          receivedBody = "";
+          const result = await runCli(["note", `--${source.flag}`, cliValPayload, ...target], AGENT_TOKEN);
+          assert.equal(result.code, 0, result.stderr);
+          assert.equal(receivedBody, cliValPayload, `${source.name} source must supply body end to end through CLI`);
+        }
+      }
     } finally {
       server.close();
     }

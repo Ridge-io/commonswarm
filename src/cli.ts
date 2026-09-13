@@ -1293,9 +1293,12 @@ export const FORMAT_ADVISORY_MESSAGE =
  * as one wall of text by isBlobBody, return a calm recommendation to use --body-file.
  * Never throws, never mutates the body.
  */
-export function messageFormatAdvisory(body: string): string | null {
+export function messageFormatAdvisory(
+  body: string,
+  inspector: (body: string) => boolean = isBlobBody,
+): string | null {
   try {
-    if (isBlobBody(body)) {
+    if (inspector(body)) {
       return FORMAT_ADVISORY_MESSAGE;
     }
   } catch {
@@ -3641,20 +3644,7 @@ async function runPostSignal(
 ): Promise<void> {
   const allowTo = kind !== "working-on";
   const allowWait = kind === "ask";
-  const allowedFlags = [
-    ...TARGET_FLAGS,
-    "workspace-id",
-    ...CREDENTIAL_FLAGS,
-    ...BODY_FLAGS,
-    ...(allowTo ? ["to"] : []),
-    "about",
-    "channel",
-    "until",
-    ...(allowWait ? ["wait"] : []),
-    ...(allowTo ? ["attach"] : []),
-    "json",
-    ...SESSION_CONTEXT_FLAGS,
-  ];
+  const allowedFlags = postSignalAllowedFlags(kind);
   const body = await resolveSignalBody(args, 1, allowedFlags);
   /* Checked before the target, the credential, or any upload: a name that
    * cannot be a channel name costs nothing to refuse here, and the sentence is
@@ -3869,6 +3859,25 @@ async function runPostSignal(
   );
 }
 
+export function postSignalAllowedFlags(kind: SignalKind = "note"): readonly string[] {
+  const allowTo = kind !== "working-on";
+  const allowWait = kind === "ask";
+  return [
+    ...TARGET_FLAGS,
+    "workspace-id",
+    ...CREDENTIAL_FLAGS,
+    ...BODY_FLAGS,
+    ...(allowTo ? ["to"] : []),
+    "about",
+    "channel",
+    "until",
+    ...(allowWait ? ["wait"] : []),
+    ...(allowTo ? ["attach"] : []),
+    "json",
+    ...SESSION_CONTEXT_FLAGS,
+  ];
+}
+
 /**
  * The reply verb refusal message. Exported and pure so it is unit-testable without a
  * full CLI spawn. A 403 on REPLY means the referenced signal is not one this caller may
@@ -3929,18 +3938,7 @@ export function threadReplyMessage(
 }
 
 async function runReply(args: Arguments): Promise<void> {
-  const allowedFlags = [
-    ...TARGET_FLAGS,
-    "workspace-id",
-    ...CREDENTIAL_FLAGS,
-    ...BODY_FLAGS,
-    "attach",
-    "broadcast-to-channel",
-    "thread",
-    "until",
-    "json",
-    ...SESSION_CONTEXT_FLAGS,
-  ];
+  const allowedFlags = replyAllowedFlags();
   const inThread = args.has("thread");
   const broadcastToChannel = args.has("broadcast-to-channel");
   if (broadcastToChannel && !inThread) {
@@ -4045,6 +4043,21 @@ async function runReply(args: Arguments): Promise<void> {
       })
     }\n${formatAdvisory !== null ? `\n${formatAdvisory}\n` : ""}`,
   );
+}
+
+export function replyAllowedFlags(): readonly string[] {
+  return [
+    ...TARGET_FLAGS,
+    "workspace-id",
+    ...CREDENTIAL_FLAGS,
+    ...BODY_FLAGS,
+    "attach",
+    "broadcast-to-channel",
+    "thread",
+    "until",
+    "json",
+    ...SESSION_CONTEXT_FLAGS,
+  ];
 }
 
 /**
