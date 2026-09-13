@@ -1077,10 +1077,14 @@ export class BodyEmptyError extends Error {
   }
 }
 
+export type BodyStdinErrorCode =
+  | "body_stdin_tty"
+  | "body_stdin_unreadable";
+
 export class BodyStdinError extends Error {
   readonly name = "BodyStdinError";
 
-  constructor(readonly code: string, message: string) {
+  constructor(readonly code: BodyStdinErrorCode | string, message: string) {
     super(`[${code}] ${message}`);
   }
 }
@@ -1147,13 +1151,17 @@ export function stripSingleTrailingNewline(text: string): string {
   return text;
 }
 
+export const STREAM_CHUNK_BYTE_LIMIT = 4096;
+
 /**
  * Reads an incremental stream of bytes and decodes strictly as UTF-8.
+ * Preserves leading UTF-8 BOM (U+FEFF) as a character counted toward the cap.
  * Rejects invalid UTF-8 bytes with BodyEncodingError ("body_invalid_utf8").
- * Bounds accumulated character length to (maxChars + 2) during stream consumption,
- * allowing for multi-byte characters and at most one trailing newline (\r\n or \n)
- * to be stripped, and aborts immediately with BodyLengthError ("body_too_large")
- * once the bound is passed so resource use is bounded.
+ * Bounds accumulated character length to at most (maxChars + 2) at all times,
+ * checking bounds before appending and slicing incoming chunks to at most 4096 bytes
+ * so peak decode memory is strictly bounded, allowing for multi-byte characters and
+ * at most one trailing newline (\r\n or \n) to be stripped, and aborts immediately with
+ * BodyLengthError ("body_too_large") once the bound is exceeded.
  */
 export async function readBoundedUtf8Stream(
   stream: AsyncIterable<Uint8Array | Buffer | string>,
@@ -1164,7 +1172,7 @@ export async function readBoundedUtf8Stream(
     destroy?: () => void;
   },
 ): Promise<string> {
-  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   let decoded = "";
   const sourceDesc = options.source === "file"
     ? `--body-file ${options.filePath}`
@@ -1178,24 +1186,31 @@ export async function readBoundedUtf8Stream(
         ? Buffer.from(rawChunk, "utf8")
         : Buffer.from(rawChunk.buffer, rawChunk.byteOffset, rawChunk.byteLength);
 
-      let textChunk: string;
-      try {
-        textChunk = decoder.decode(chunk, { stream: true });
-      } catch {
-        options.destroy?.();
-        throw new BodyEncodingError(
-          "body_invalid_utf8",
-          `could not decode ${sourceDesc} as UTF-8: signal body is not valid UTF-8`,
+      for (let offset = 0; offset < chunk.byteLength; offset += STREAM_CHUNK_BYTE_LIMIT) {
+        const slice = chunk.subarray(
+          offset,
+          Math.min(offset + STREAM_CHUNK_BYTE_LIMIT, chunk.byteLength),
         );
-      }
 
-      decoded += textChunk;
-      if (decoded.length > maxChars + 2) {
-        options.destroy?.();
-        throw new BodyLengthError(
-          "body_too_large",
-          `signal text exceeds the maximum of ${maxChars} characters`,
-        );
+        let textChunk: string;
+        try {
+          textChunk = decoder.decode(slice, { stream: true });
+        } catch {
+          options.destroy?.();
+          throw new BodyEncodingError(
+            "body_invalid_utf8",
+            `could not decode ${sourceDesc} as UTF-8: signal body is not valid UTF-8`,
+          );
+        }
+
+        if (decoded.length + textChunk.length > maxChars + 2) {
+          options.destroy?.();
+          throw new BodyLengthError(
+            "body_too_large",
+            `signal text exceeds the maximum of ${maxChars} characters`,
+          );
+        }
+        decoded += textChunk;
       }
     }
 
@@ -1209,14 +1224,42 @@ export async function readBoundedUtf8Stream(
         `could not decode ${sourceDesc} as UTF-8: signal body is not valid UTF-8`,
       );
     }
-    decoded += finalChunk;
 
-    if (decoded.length > maxChars + 2) {
+    if (decoded.length + finalChunk.length > maxChars + 2) {
       throw new BodyLengthError(
         "body_too_large",
         `signal text exceeds the maximum of ${maxChars} characters`,
       );
     }
+    decoded += finalChunk;
+  } catch (error) {
+    options.destroy?.();
+    if (
+      error instanceof BodyEncodingError ||
+      error instanceof BodyLengthError ||
+      error instanceof BodyFileError ||
+      error instanceof BodyStdinError
+    ) {
+      throw error;
+    }
+    const detail = error instanceof Error ? error.message : "unknown stream read failure";
+    if (options.source === "stdin") {
+      throw new BodyStdinError(
+        "body_stdin_unreadable",
+        `could not read --body-stdin: ${detail}`,
+      );
+    }
+    const errCode = (error as NodeJS.ErrnoException)?.code;
+    if (errCode === "ENOENT") {
+      throw new BodyFileError(
+        "body_file_missing",
+        `--body-file does not exist: ${options.filePath}`,
+      );
+    }
+    throw new BodyFileError(
+      "body_file_unreadable",
+      `could not read --body-file ${options.filePath}: ${detail}`,
+    );
   } finally {
     options.destroy?.();
   }
@@ -1323,20 +1366,11 @@ export async function resolveSignalBody(
     raw = stripSingleTrailingNewline(args.positionals[positionalIndex]!);
   }
 
-  if (fromFile !== undefined || fromStdin) {
-    if (raw.trim().length === 0) {
-      throw new BodyEmptyError(
-        "body_empty",
-        "signal body cannot be empty or contain only whitespace",
-      );
-    }
-  } else {
-    if (raw.trim().length === 0 && raw.length > 0) {
-      throw new BodyEmptyError(
-        "body_empty",
-        "signal body cannot be empty or contain only whitespace",
-      );
-    }
+  if (raw.trim().length === 0) {
+    throw new BodyEmptyError(
+      "body_empty",
+      "signal body cannot be empty or contain only whitespace",
+    );
   }
 
   return signalText(raw, "body");
@@ -3175,8 +3209,9 @@ function signalText(value: string, label: "body" | "about"): string {
           `signal text is ${value.length} characters; the maximum is ${maximum}`,
         );
       }
-      throw new Error(
-        `signal text is ${value.length} characters; the maximum is ${maximum}`,
+      throw new BodyEmptyError(
+        "body_empty",
+        "signal body cannot be empty or contain only whitespace",
       );
     }
     throw new Error(

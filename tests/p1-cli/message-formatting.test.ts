@@ -27,6 +27,7 @@ import {
   FORMAT_ADVISORY_FIELD,
   FORMAT_ADVISORY_MESSAGE,
   SIGNAL_BODY_MAX,
+  STREAM_CHUNK_BYTE_LIMIT,
   messageFormatAdvisory,
   readBoundedUtf8Stream,
   stripSingleTrailingNewline,
@@ -212,6 +213,10 @@ test("typed error classes: export codes and retain error hierarchies", () => {
   const stdinErr = new BodyStdinError("body_stdin_tty", "tty error");
   assert.equal(stdinErr.code, "body_stdin_tty");
   assert.ok(stdinErr instanceof BodyStdinError);
+
+  const stdinUnreadableErr = new BodyStdinError("body_stdin_unreadable", "unreadable");
+  assert.equal(stdinUnreadableErr.code, "body_stdin_unreadable");
+  assert.ok(stdinUnreadableErr instanceof BodyStdinError);
 
   const encodingErr = new BodyEncodingError();
   assert.equal(encodingErr.code, "body_invalid_utf8");
@@ -1073,3 +1078,199 @@ test("all 4 verbs (note, ask, reply, working-on) support --body-file and format 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// 6. Fix Round 2 Tests: BOM, Memory Bound, Stdin Failure Typing, Positional Empty
+// ---------------------------------------------------------------------------
+
+test("UTF-8 BOM: preserved as character, counted toward 8000 cap; BOM+8000 rejected, BOM+7999 accepted", async () => {
+  const bom = Buffer.from([0xef, 0xbb, 0xbf]);
+  const body8000 = Buffer.from("a".repeat(8000), "utf8");
+  const body7999 = Buffer.from("a".repeat(7999), "utf8");
+
+  async function* stream(buf: Buffer) {
+    yield buf;
+  }
+
+  // 1. BOM + 8000 chars is 8001 code units -> rejected with BodyLengthError
+  await assert.rejects(
+    async () => {
+      await readBoundedUtf8Stream(stream(Buffer.concat([bom, body8000])), SIGNAL_BODY_MAX, {
+        source: "stdin",
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof BodyLengthError);
+      assert.equal(err.code, "body_too_large");
+      assert.match(err.message, /signal text is 8001 characters; the maximum is 8000/);
+      return true;
+    },
+  );
+
+  // 2. BOM + 7999 chars is 8000 code units -> accepted and BOM character preserved (passed through)
+  const accepted = await readBoundedUtf8Stream(stream(Buffer.concat([bom, body7999])), SIGNAL_BODY_MAX, {
+    source: "stdin",
+  });
+  assert.equal(accepted.length, 8000);
+  assert.equal(accepted.charCodeAt(0), 0xfeff, "leading BOM U+FEFF character must be preserved");
+  assert.equal(accepted.slice(1), "a".repeat(7999));
+
+  // 3. Via CLI with --body-file: BOM + 8000 chars is refused with body_too_large; BOM + 7999 chars is accepted
+  const dir = await mkdtemp(resolve(tmpdir(), "cswarm-msgfmt-bom-"));
+  const overBomFile = resolve(dir, "over-bom.txt");
+  await writeFile(overBomFile, Buffer.concat([bom, body8000]));
+  const okBomFile = resolve(dir, "ok-bom.txt");
+  await writeFile(okBomFile, Buffer.concat([bom, body7999]));
+
+  let postedBody = "";
+  const server = createMockCloudServer((cmd) => {
+    postedBody = cmd.body;
+  });
+  await new Promise<void>((res, rej) => {
+    server.once("error", rej);
+    server.listen(0, "127.0.0.1", () => res());
+  });
+
+  try {
+    const port = (server.address() as { port: number }).port;
+    const target = [
+      "--url",
+      `http://127.0.0.1:${port}`,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--agent-token-stdin",
+    ];
+
+    const resOver = await runCli(["note", "--body-file", overBomFile, ...target], AGENT_TOKEN);
+    assert.equal(resOver.code, 1);
+    assert.match(resOver.stderr, /body_too_large/);
+    assert.match(resOver.stderr, /signal text is 8001 characters; the maximum is 8000/);
+
+    const resOk = await runCli(["note", "--body-file", okBomFile, ...target], AGENT_TOKEN);
+    assert.equal(resOk.code, 0, resOk.stderr);
+    assert.equal(postedBody.length, 8000);
+    assert.equal(postedBody.charCodeAt(0), 0xfeff, "client sends BOM character intact to server");
+  } finally {
+    server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("memory bound: huge chunk from arbitrary iterable is checked before appending and chunk size is bounded", async () => {
+  assert.equal(STREAM_CHUNK_BYTE_LIMIT, 4096);
+
+  let destroyed = false;
+  // An arbitrary iterable yields a huge chunk of 100,000 bytes
+  async function* hugeChunkStream() {
+    yield Buffer.alloc(100000, 0x61);
+  }
+
+  await assert.rejects(
+    async () => {
+      await readBoundedUtf8Stream(hugeChunkStream(), SIGNAL_BODY_MAX, {
+        source: "stdin",
+        destroy: () => { destroyed = true; },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof BodyLengthError);
+      assert.equal(err.code, "body_too_large");
+      assert.match(err.message, /signal text exceeds the maximum of 8000 characters/);
+      return true;
+    },
+  );
+  assert.equal(destroyed, true);
+
+  // Proves chunk-sliced decode bound: a 20KB chunk where bytes 0..8199 are valid ASCII
+  // and byte 8200 has invalid UTF-8 (0xff). Because chunks are bounded to 4096 bytes,
+  // slice 2 (4096..8191) exceeds maxChars + 2 (8002) and throws body_too_large BEFORE
+  // byte 8200 is ever decoded. Without chunk slicing, TextDecoder would process the whole
+  // 20KB chunk at once and throw body_invalid_utf8 instead of body_too_large.
+  const valid8200 = Buffer.alloc(8200, 0x61);
+  const invalidTrailing = Buffer.from([0xff, 0xff, 0xff]);
+  const bigChunkWithTrailingInvalid = Buffer.concat([valid8200, invalidTrailing]);
+
+  async function* invalidTrailingStream() {
+    yield bigChunkWithTrailingInvalid;
+  }
+
+  await assert.rejects(
+    async () => {
+      await readBoundedUtf8Stream(invalidTrailingStream(), SIGNAL_BODY_MAX, {
+        source: "stdin",
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof BodyLengthError, "must be BodyLengthError, not BodyEncodingError");
+      assert.equal(err.code, "body_too_large");
+      return true;
+    },
+  );
+});
+
+test("stdin stream failure: throwing iterable is wrapped in typed BodyStdinError with stable code body_stdin_unreadable", async () => {
+  async function* failingStream() {
+    throw new Error("raw socket disconnect error");
+  }
+
+  await assert.rejects(
+    async () => {
+      await readBoundedUtf8Stream(failingStream(), SIGNAL_BODY_MAX, {
+        source: "stdin",
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof BodyStdinError, "must be instance of BodyStdinError");
+      assert.equal((err as BodyStdinError).code, "body_stdin_unreadable");
+      assert.equal((err as BodyStdinError).name, "BodyStdinError");
+      assert.match((err as Error).message, /\[body_stdin_unreadable\] could not read --body-stdin: raw socket disconnect error/);
+      return true;
+    },
+  );
+});
+
+test("positional empty bodies: newline, CRLF, and empty strings route to typed BodyEmptyError", async () => {
+  const server = createMockCloudServer();
+  await new Promise<void>((res, rej) => {
+    server.once("error", rej);
+    server.listen(0, "127.0.0.1", () => res());
+  });
+
+  try {
+    const port = (server.address() as { port: number }).port;
+    const target = [
+      "--url",
+      `http://127.0.0.1:${port}`,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--agent-token-stdin",
+    ];
+
+    // Positional "\n"
+    const resLf = await runCli(["note", "\n", ...target], AGENT_TOKEN);
+    assert.equal(resLf.code, 1);
+    assert.match(resLf.stderr, /\[body_empty\] signal body cannot be empty or contain only whitespace/);
+
+    // Positional "\r\n"
+    const resCrlf = await runCli(["note", "\r\n", ...target], AGENT_TOKEN);
+    assert.equal(resCrlf.code, 1);
+    assert.match(resCrlf.stderr, /\[body_empty\] signal body cannot be empty or contain only whitespace/);
+
+    // Positional ""
+    const resEmpty = await runCli(["note", "", ...target], AGENT_TOKEN);
+    assert.equal(resEmpty.code, 1);
+    assert.match(resEmpty.stderr, /\[body_empty\] signal body cannot be empty or contain only whitespace/);
+
+    // Positional "   "
+    const resSpaces = await runCli(["note", "   ", ...target], AGENT_TOKEN);
+    assert.equal(resSpaces.code, 1);
+    assert.match(resSpaces.stderr, /\[body_empty\] signal body cannot be empty or contain only whitespace/);
+  } finally {
+    server.close();
+  }
+});
+
