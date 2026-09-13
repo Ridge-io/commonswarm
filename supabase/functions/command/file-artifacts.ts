@@ -67,8 +67,12 @@ export const FILE_MAX_VERSIONS_PER_NAME = BRAIN_LIVE_VERSION_LIMIT;
 // or version-cap refusal still spends from the bucket.
 //
 // What is bound where (Item C / §2.8):
-// The signed upload URL itself binds only the path; Supabase signed upload URLs carry no per-URL
-// size or digest parameter, so the URL binds neither size nor digest.
+// The signed upload token carries five fields: url, scope: "upload", iat, exp, and upsert: false.
+// Of these, url constrains the target object path, scope constrains the operation to upload,
+// exp constrains the upload validity window (2 hours), and upsert: false prevents overwriting
+// an existing object at that path; iat is issuance metadata and does not constrain the upload.
+// Neither size nor digest is among the token fields, and Supabase signed upload URLs carry no
+// per-URL size or digest parameter.
 // The bucket file_size_limit (FILE_MAX_VERSION_BYTES = 25 MiB) acts as the outer maximum bound
 // enforced by Storage at upload time. Commit refuses an object larger than declared
 // (file_size_exceeds_declaration); an object smaller than its declaration is accepted
@@ -90,7 +94,7 @@ export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 600;
 // as its own item.
 //
 // THIS IS A FIXED CLOCK-HOUR BUCKET, NOT A PACE. incrementRateBucket keys on
-// date_trunc('hour', statement_timestamp()), so it bounds grants per hour, not pace, and
+// date_trunc('hour', statement_timestamp()), so it bounds create attempts per hour, not pace, and
 // allows a double burst across an hour boundary. Like the per-identity limit, it bounds
 // validated create attempts.
 export const FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR = 2000;

@@ -43,8 +43,8 @@
  *   500 unpurged names / workspace,          -> FILE_WORKSPACE_MAX_NAMES,
  *   20 live+in-flight / file name, but a         FILE_MAX_VERSIONS_PER_NAME, :55
  *   brain topic caps only in-flight             (src/protocol/brain-version-window.ts)
- *   600 version creates / identity / hour    -> FILE_CREATE_RATE_LIMIT_PER_HOUR, :77
- *   2000 version creates / ws / hour         -> FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR, :96
+ *   600 version creates / identity / hour    -> FILE_CREATE_RATE_LIMIT_PER_HOUR, :81
+ *   2000 version creates / ws / hour         -> FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR, :100
  * If any of these change in the code, they change here. A published cap that no longer
  * matches the enforced one is worse than no published cap.
  *
