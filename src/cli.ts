@@ -5,7 +5,7 @@ import { AGENT_PROFILE_COMMANDS, isBlobBody } from "./cloud/agent-onboarding-con
 import { AgentSetupError, readAgentProfile, readProfileCredential, profileSessionContext } from "./cloud/agent-profile.js";
 import { ONBOARDING_BOOLEAN_FLAGS, ONBOARDING_VALUE_FLAGS, onboardingUsage, runOnboardingCommand } from "./onboarding-cli.js";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { createReadStream, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { open, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -1008,6 +1008,8 @@ async function agentCredential(
   );
 }
 
+export const SIGNAL_BODY_MAX = 8000;
+
 export type BodyFileErrorCode =
   | "body_file_missing"
   | "body_file_unreadable";
@@ -1083,6 +1085,32 @@ export class BodyStdinError extends Error {
   }
 }
 
+export class BodyEncodingError extends Error {
+  readonly name = "BodyEncodingError";
+  readonly code = "body_invalid_utf8";
+
+  constructor(codeOrMessage: string = "body_invalid_utf8", maybeMessage?: string) {
+    const code = maybeMessage ? codeOrMessage : "body_invalid_utf8";
+    const message = maybeMessage ?? (codeOrMessage === "body_invalid_utf8" ? "signal body is not valid UTF-8" : codeOrMessage);
+    super(`[${code}] ${message}`);
+  }
+}
+export const BodyUtf8Error = BodyEncodingError;
+export type BodyUtf8Error = BodyEncodingError;
+
+export class BodyLengthError extends Error {
+  readonly name = "BodyLengthError";
+  readonly code = "body_too_large";
+
+  constructor(codeOrMessage: string = "body_too_large", maybeMessage?: string) {
+    const code = maybeMessage ? codeOrMessage : "body_too_large";
+    const message = maybeMessage ?? (codeOrMessage === "body_too_large" ? `signal text exceeds the maximum of ${SIGNAL_BODY_MAX} characters` : codeOrMessage);
+    super(`[${code}] ${message}`);
+  }
+}
+export const BodyOverflowError = BodyLengthError;
+export type BodyOverflowError = BodyLengthError;
+
 export const FORMAT_ADVISORY_FIELD = "format_advisory" as const;
 export const FORMAT_ADVISORY_MESSAGE =
   "This message has no newlines and renders as one wall of text. Write Markdown to a file and post with --body-file next time.";
@@ -1106,7 +1134,8 @@ export function messageFormatAdvisory(body: string): string | null {
 /**
  * Strips at most one trailing newline (\n or \r\n).
  * Matches CLI behavior for text input (like shell here-docs and echo).
- * Blank lines, indentation, and internal formatting are preserved byte-for-byte.
+ * Blank lines, indentation, and internal formatting are preserved by the client
+ * apart from at most one trailing newline; the server then applies its documented sanitizer.
  */
 export function stripSingleTrailingNewline(text: string): string {
   if (text.endsWith("\r\n")) {
@@ -1119,9 +1148,95 @@ export function stripSingleTrailingNewline(text: string): string {
 }
 
 /**
+ * Reads an incremental stream of bytes and decodes strictly as UTF-8.
+ * Rejects invalid UTF-8 bytes with BodyEncodingError ("body_invalid_utf8").
+ * Bounds accumulated character length to (maxChars + 2) during stream consumption,
+ * allowing for multi-byte characters and at most one trailing newline (\r\n or \n)
+ * to be stripped, and aborts immediately with BodyLengthError ("body_too_large")
+ * once the bound is passed so resource use is bounded.
+ */
+export async function readBoundedUtf8Stream(
+  stream: AsyncIterable<Uint8Array | Buffer | string>,
+  maxChars: number,
+  options: {
+    source: "file" | "stdin";
+    filePath?: string;
+    destroy?: () => void;
+  },
+): Promise<string> {
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let decoded = "";
+  const sourceDesc = options.source === "file"
+    ? `--body-file ${options.filePath}`
+    : "--body-stdin";
+
+  try {
+    for await (const rawChunk of stream) {
+      const chunk = Buffer.isBuffer(rawChunk)
+        ? rawChunk
+        : typeof rawChunk === "string"
+        ? Buffer.from(rawChunk, "utf8")
+        : Buffer.from(rawChunk.buffer, rawChunk.byteOffset, rawChunk.byteLength);
+
+      let textChunk: string;
+      try {
+        textChunk = decoder.decode(chunk, { stream: true });
+      } catch {
+        options.destroy?.();
+        throw new BodyEncodingError(
+          "body_invalid_utf8",
+          `could not decode ${sourceDesc} as UTF-8: signal body is not valid UTF-8`,
+        );
+      }
+
+      decoded += textChunk;
+      if (decoded.length > maxChars + 2) {
+        options.destroy?.();
+        throw new BodyLengthError(
+          "body_too_large",
+          `signal text exceeds the maximum of ${maxChars} characters`,
+        );
+      }
+    }
+
+    let finalChunk: string;
+    try {
+      finalChunk = decoder.decode();
+    } catch {
+      options.destroy?.();
+      throw new BodyEncodingError(
+        "body_invalid_utf8",
+        `could not decode ${sourceDesc} as UTF-8: signal body is not valid UTF-8`,
+      );
+    }
+    decoded += finalChunk;
+
+    if (decoded.length > maxChars + 2) {
+      throw new BodyLengthError(
+        "body_too_large",
+        `signal text exceeds the maximum of ${maxChars} characters`,
+      );
+    }
+  } finally {
+    options.destroy?.();
+  }
+
+  const stripped = stripSingleTrailingNewline(decoded);
+  if (stripped.length > maxChars) {
+    throw new BodyLengthError(
+      "body_too_large",
+      `signal text is ${stripped.length} characters; the maximum is ${maxChars}`,
+    );
+  }
+
+  return stripped;
+}
+
+/**
  * Read the signal body from exactly one source: positional argv, --body-file, or --body-stdin.
- * Preserves the payload byte-for-byte unchanged: no trimming beyond a single trailing newline,
- * no re-wrapping, no newline normalisation, and no unescaping.
+ * Sends the payload to the server unchanged apart from stripping at most one trailing newline:
+ * no trimming beyond that single trailing newline, no client-side re-wrapping, no newline
+ * normalisation, and no unescaping (the server then applies its documented sanitizer to stored text).
  */
 export async function resolveSignalBody(
   args: Arguments,
@@ -1166,8 +1281,20 @@ export async function resolveSignalBody(
   let raw: string;
   if (fromFile !== undefined) {
     try {
-      raw = readFileSync(fromFile, "utf8");
+      const stream = createReadStream(fromFile, { highWaterMark: 4096 });
+      raw = await readBoundedUtf8Stream(stream, SIGNAL_BODY_MAX, {
+        source: "file",
+        filePath: fromFile,
+        destroy: () => stream.destroy(),
+      });
     } catch (error) {
+      if (
+        error instanceof BodyEncodingError ||
+        error instanceof BodyLengthError ||
+        error instanceof BodyEmptyError
+      ) {
+        throw error;
+      }
       const code = (error as NodeJS.ErrnoException)?.code;
       if (code === "ENOENT") {
         throw new BodyFileError(
@@ -1181,7 +1308,6 @@ export async function resolveSignalBody(
         `could not read --body-file ${fromFile}: ${detail}`,
       );
     }
-    raw = stripSingleTrailingNewline(raw);
   } else if (fromStdin) {
     if (process.stdin.isTTY) {
       throw new BodyStdinError(
@@ -1189,11 +1315,10 @@ export async function resolveSignalBody(
         "--body-stdin requires piped input; it is never accepted from a terminal",
       );
     }
-    const chunks: Buffer[] = [];
-    for await (const chunk of process.stdin) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    raw = stripSingleTrailingNewline(Buffer.concat(chunks).toString("utf8"));
+    raw = await readBoundedUtf8Stream(process.stdin, SIGNAL_BODY_MAX, {
+      source: "stdin",
+      destroy: () => process.stdin.destroy(),
+    });
   } else {
     raw = stripSingleTrailingNewline(args.positionals[positionalIndex]!);
   }
@@ -3038,13 +3163,18 @@ export function resolveTurnBudgetOrDefer(
  * places (file-store.ts, signals.ts) — no shared module across the protocol
  * boundary; if the DB cap moves, grep 8000/500 for the signal body/about. Named
  * here so the usage text below and the validator cannot drift from each other. */
-const SIGNAL_BODY_MAX = 8000;
 const SIGNAL_ABOUT_MAX = 500;
 
 function signalText(value: string, label: "body" | "about"): string {
   const maximum = label === "body" ? SIGNAL_BODY_MAX : SIGNAL_ABOUT_MAX;
   if (value.length < (label === "body" ? 1 : 0) || value.length > maximum) {
     if (label === "body") {
+      if (value.length > maximum) {
+        throw new BodyLengthError(
+          "body_too_large",
+          `signal text is ${value.length} characters; the maximum is ${maximum}`,
+        );
+      }
       throw new Error(
         `signal text is ${value.length} characters; the maximum is ${maximum}`,
       );

@@ -16,7 +16,9 @@ import {
 } from "../../src/cloud/agent-onboarding-contract.js";
 import {
   BodyEmptyError,
+  BodyEncodingError,
   BodyFileError,
+  BodyLengthError,
   BodySourceConflictError,
   BodySourceError,
   BodySourceMissingError,
@@ -24,7 +26,9 @@ import {
   BodyStdinError,
   FORMAT_ADVISORY_FIELD,
   FORMAT_ADVISORY_MESSAGE,
+  SIGNAL_BODY_MAX,
   messageFormatAdvisory,
+  readBoundedUtf8Stream,
   stripSingleTrailingNewline,
 } from "../../src/cli.js";
 
@@ -49,7 +53,7 @@ const ARTIFACT = JSON.stringify({
 
 async function runCli(
   args: string[],
-  input = "",
+  input: string | Buffer = "",
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const child = spawn(process.execPath, [
     "--import",
@@ -208,6 +212,14 @@ test("typed error classes: export codes and retain error hierarchies", () => {
   const stdinErr = new BodyStdinError("body_stdin_tty", "tty error");
   assert.equal(stdinErr.code, "body_stdin_tty");
   assert.ok(stdinErr instanceof BodyStdinError);
+
+  const encodingErr = new BodyEncodingError();
+  assert.equal(encodingErr.code, "body_invalid_utf8");
+  assert.ok(encodingErr instanceof BodyEncodingError);
+
+  const lengthErr = new BodyLengthError();
+  assert.equal(lengthErr.code, "body_too_large");
+  assert.ok(lengthErr instanceof BodyLengthError);
 });
 
 // ---------------------------------------------------------------------------
@@ -230,6 +242,16 @@ test("drift test: site prompt and AGENT_QUICK_GUIDE both derive from AGENT_MESSA
     "site agent-prompt.ts must interpolate AGENT_MESSAGE_FORMAT_RULE into the prompt text",
   );
 
+  const contractSource = await readFile(
+    resolve(root, "src/cloud/agent-onboarding-contract.ts"),
+    "utf8",
+  );
+  assert.match(
+    contractSource,
+    /AGENT_QUICK_GUIDE\s*=\s*`[^`]*\$\{AGENT_MESSAGE_FORMAT_RULE\}[^`]*`/,
+    "agent-onboarding-contract.ts must interpolate AGENT_MESSAGE_FORMAT_RULE into AGENT_QUICK_GUIDE",
+  );
+
   assert.ok(
     AGENT_QUICK_GUIDE.includes(AGENT_MESSAGE_FORMAT_RULE),
     "AGENT_QUICK_GUIDE must contain AGENT_MESSAGE_FORMAT_RULE",
@@ -245,7 +267,7 @@ test("drift test: site prompt and AGENT_QUICK_GUIDE both derive from AGENT_MESSA
 // 3. CLI Input & Formatting Tests with Mock Cloud Server
 // ---------------------------------------------------------------------------
 
-test("--body-file byte-identical post with blank lines, code blocks, and single trailing newline stripped", async () => {
+test("--body-file sends body unchanged to server with blank lines, code blocks, and single trailing newline stripped", async () => {
   let receivedBody = "";
   let networkCalls = 0;
 
@@ -353,7 +375,7 @@ test("--body-file with two trailing newlines retains the second one", async () =
   }
 });
 
-test("--body-stdin reads from piped stdin byte-identical and posts", async () => {
+test("--body-stdin reads from piped stdin and sends body unchanged to server apart from single trailing newline", async () => {
   let receivedBody = "";
 
   const server = createMockCloudServer((cmd) => {
@@ -538,6 +560,7 @@ test("refusal at parse time: file >8000 characters is refused with existing leng
     ], AGENT_TOKEN);
 
     assert.equal(res.code, 1);
+    assert.match(res.stderr, /body_too_large/);
     assert.match(res.stderr, /signal text is 8001 characters; the maximum is 8000/);
     assert.equal(networkCalls, 0, "large body must be refused before network call");
   } finally {
@@ -657,11 +680,286 @@ test("refusal at parse time: missing or unreadable file gives typed error naming
   }
 });
 
+test("refusal at parse time: invalid UTF-8 in --body-file is refused with typed error naming path", async () => {
+  let networkCalls = 0;
+  const server = createServer(() => networkCalls++);
+  await new Promise<void>((res, rej) => {
+    server.once("error", rej);
+    server.listen(0, "127.0.0.1", () => res());
+  });
+
+  const dir = await mkdtemp(resolve(tmpdir(), "cswarm-msgfmt-invalid-utf8-"));
+  const badPath = resolve(dir, "bad-utf8.bin");
+  // 0xff is invalid in UTF-8
+  await writeFile(badPath, Buffer.from([0x68, 0x65, 0x6c, 0x6c, 0x6f, 0xff]));
+
+  try {
+    const port = (server.address() as { port: number }).port;
+    const res = await runCli([
+      "note",
+      "--body-file",
+      badPath,
+      "--url",
+      `http://127.0.0.1:${port}`,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--agent-token-stdin",
+    ], AGENT_TOKEN);
+
+    assert.equal(res.code, 1);
+    assert.match(res.stderr, /body_invalid_utf8/);
+    assert.match(res.stderr, new RegExp(badPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.equal(networkCalls, 0, "invalid UTF-8 must be refused before network call");
+  } finally {
+    server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("refusal at parse time: invalid UTF-8 in --body-stdin is refused with typed error", async () => {
+  let networkCalls = 0;
+  const server = createServer(() => networkCalls++);
+  await new Promise<void>((res, rej) => {
+    server.once("error", rej);
+    server.listen(0, "127.0.0.1", () => res());
+  });
+
+  const dir = await mkdtemp(resolve(tmpdir(), "cswarm-msgfmt-stdin-utf8-"));
+  const credPath = resolve(dir, "cred.json");
+  await writeFile(credPath, ARTIFACT, { mode: 0o600 });
+
+  try {
+    const port = (server.address() as { port: number }).port;
+    const res = await runCli([
+      "note",
+      "--body-stdin",
+      "--url",
+      `http://127.0.0.1:${port}`,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--agent-token-file",
+      credPath,
+    ], Buffer.from([0x61, 0x62, 0xff, 0x63]));
+
+    assert.equal(res.code, 1);
+    assert.match(res.stderr, /body_invalid_utf8/);
+    assert.match(res.stderr, /--body-stdin/);
+    assert.equal(networkCalls, 0, "invalid UTF-8 on stdin must be refused before network call");
+  } finally {
+    server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("refusal at parse time: large over-limit file (>8000 chars) is refused with bounded read and typed error", async () => {
+  let networkCalls = 0;
+  const server = createServer(() => networkCalls++);
+  await new Promise<void>((res, rej) => {
+    server.once("error", rej);
+    server.listen(0, "127.0.0.1", () => res());
+  });
+
+  const dir = await mkdtemp(resolve(tmpdir(), "cswarm-msgfmt-large-file-"));
+  const largePath = resolve(dir, "large.txt");
+  // 100,000 chars - proves bounded resource use does not retain whole file
+  await writeFile(largePath, "x".repeat(100000), "utf8");
+
+  try {
+    const port = (server.address() as { port: number }).port;
+    const res = await runCli([
+      "note",
+      "--body-file",
+      largePath,
+      "--url",
+      `http://127.0.0.1:${port}`,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--agent-token-stdin",
+    ], AGENT_TOKEN);
+
+    assert.equal(res.code, 1);
+    assert.match(res.stderr, /body_too_large/);
+    assert.match(res.stderr, /maximum of 8000 characters/);
+    assert.equal(networkCalls, 0, "large body must be refused before network call");
+  } finally {
+    server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("refusal at parse time: large over-limit stdin (>8000 chars) is refused with bounded read and typed error", async () => {
+  let networkCalls = 0;
+  const server = createServer(() => networkCalls++);
+  await new Promise<void>((res, rej) => {
+    server.once("error", rej);
+    server.listen(0, "127.0.0.1", () => res());
+  });
+
+  const dir = await mkdtemp(resolve(tmpdir(), "cswarm-msgfmt-large-stdin-"));
+  const credPath = resolve(dir, "cred.json");
+  await writeFile(credPath, ARTIFACT, { mode: 0o600 });
+
+  try {
+    const port = (server.address() as { port: number }).port;
+    const res = await runCli([
+      "note",
+      "--body-stdin",
+      "--url",
+      `http://127.0.0.1:${port}`,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--agent-token-file",
+      credPath,
+    ], "y".repeat(100000));
+
+    assert.equal(res.code, 1);
+    assert.match(res.stderr, /body_too_large/);
+    assert.match(res.stderr, /maximum of 8000 characters/);
+    assert.equal(networkCalls, 0, "large stdin must be refused before network call");
+  } finally {
+    server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("boundary: 8000 chars plus single newline is accepted; 8001 plus newline is refused", async () => {
+  let receivedBody = "";
+  let networkCalls = 0;
+  const server = createMockCloudServer((cmd) => {
+    networkCalls++;
+    receivedBody = cmd.body;
+  });
+  await new Promise<void>((res, rej) => {
+    server.once("error", rej);
+    server.listen(0, "127.0.0.1", () => res());
+  });
+
+  const dir = await mkdtemp(resolve(tmpdir(), "cswarm-msgfmt-bound-"));
+  const okLfPath = resolve(dir, "ok-lf.txt");
+  const okCrlfPath = resolve(dir, "ok-crlf.txt");
+  const overLfPath = resolve(dir, "over-lf.txt");
+
+  await writeFile(okLfPath, "a".repeat(8000) + "\n", "utf8");
+  await writeFile(okCrlfPath, "b".repeat(8000) + "\r\n", "utf8");
+  await writeFile(overLfPath, "c".repeat(8001) + "\n", "utf8");
+
+  try {
+    const port = (server.address() as { port: number }).port;
+    const target = [
+      "--url",
+      `http://127.0.0.1:${port}`,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--agent-token-stdin",
+    ];
+
+    // 8000 chars + \n -> stripped to 8000 chars, accepted
+    const resLf = await runCli(["note", "--body-file", okLfPath, ...target], AGENT_TOKEN);
+    assert.equal(resLf.code, 0, resLf.stderr);
+    assert.equal(receivedBody, "a".repeat(8000));
+
+    // 8000 chars + \r\n -> stripped to 8000 chars, accepted
+    const resCrlf = await runCli(["note", "--body-file", okCrlfPath, ...target], AGENT_TOKEN);
+    assert.equal(resCrlf.code, 0, resCrlf.stderr);
+    assert.equal(receivedBody, "b".repeat(8000));
+
+    // 8001 chars + \n -> stripped to 8001 chars, refused
+    const resOver = await runCli(["note", "--body-file", overLfPath, ...target], AGENT_TOKEN);
+    assert.equal(resOver.code, 1);
+    assert.match(resOver.stderr, /body_too_large/);
+    assert.match(resOver.stderr, /signal text is 8001 characters; the maximum is 8000/);
+  } finally {
+    server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("multi-byte UTF-8 payload is sent unchanged without replacement", async () => {
+  let receivedBody = "";
+  const server = createMockCloudServer((cmd) => {
+    receivedBody = cmd.body;
+  });
+  await new Promise<void>((res, rej) => {
+    server.once("error", rej);
+    server.listen(0, "127.0.0.1", () => res());
+  });
+
+  const dir = await mkdtemp(resolve(tmpdir(), "cswarm-msgfmt-multibyte-"));
+  const mbPath = resolve(dir, "multibyte.txt");
+  // Multi-byte Unicode: Japanese + accented + emojis (surrogate pairs in UTF-16)
+  const content = "こんにちは世界 — café — 🚀✨\n";
+  await writeFile(mbPath, content, "utf8");
+
+  try {
+    const port = (server.address() as { port: number }).port;
+    const res = await runCli([
+      "note",
+      "--body-file",
+      mbPath,
+      "--url",
+      `http://127.0.0.1:${port}`,
+      "--anon-key",
+      "anon",
+      "--workspace-id",
+      WORKSPACE,
+      "--agent-token-stdin",
+    ], AGENT_TOKEN);
+
+    assert.equal(res.code, 0, res.stderr);
+    assert.equal(receivedBody, "こんにちは世界 — café — 🚀✨");
+  } finally {
+    server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("readBoundedUtf8Stream: bounds resource use by stopping stream consumption once limit is exceeded", async () => {
+  let chunksYielded = 0;
+  let destroyed = false;
+  async function* infiniteStream() {
+    while (true) {
+      chunksYielded++;
+      if (chunksYielded > 5) {
+        throw new Error("runaway stream: bounded reader did not stop consumption");
+      }
+      yield Buffer.alloc(4096, 0x61);
+    }
+  }
+
+  await assert.rejects(
+    async () => {
+      await readBoundedUtf8Stream(infiniteStream(), SIGNAL_BODY_MAX, {
+        source: "stdin",
+        destroy: () => { destroyed = true; },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof BodyLengthError);
+      assert.equal(err.code, "body_too_large");
+      assert.match(err.message, /maximum of 8000 characters/);
+      return true;
+    },
+  );
+
+  assert.equal(destroyed, true, "stream must be destroyed immediately when bound is passed");
+  assert.equal(chunksYielded, 2, "must not read more chunks once bound is passed");
+});
+
 // ---------------------------------------------------------------------------
 // 5. Blob Advisory Line & Receipt Tests (All 4 verbs, text and --json)
 // ---------------------------------------------------------------------------
 
-test("advisory line on post receipt: emitted when body is blob, omitted when not; body byte-identical", async () => {
+test("advisory line on post receipt: emitted when body is blob, omitted when not; sent body unchanged", async () => {
   let postedBody = "";
 
   const server = createMockCloudServer((cmd) => {
@@ -692,7 +990,7 @@ test("advisory line on post receipt: emitted when body is blob, omitted when not
     const resBlobText = await runCli(["note", blobText, ...target], AGENT_TOKEN);
     assert.equal(resBlobText.code, 0, resBlobText.stderr);
     assert.match(resBlobText.stdout, new RegExp(FORMAT_ADVISORY_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    assert.equal(postedBody, blobText, "posted body must never be mutated");
+    assert.equal(postedBody, blobText, "client must send body unchanged");
 
     // 2. Blob body in --json mode -> format_advisory field present
     const resBlobJson = await runCli(["note", blobText, ...target, "--json"], AGENT_TOKEN);
