@@ -8695,6 +8695,35 @@ if (isCliMain()) {
       process.exitCode = 1;
       return;
     }
+    if (error instanceof FileCommandRefused) {
+      if (process.argv.includes("--json")) {
+        process.stdout.write(
+          `${JSON.stringify(
+            {
+              error: error.code,
+              code: error.code,
+              message: safeError(error),
+              status: error.status,
+              scope: error.scope,
+              limit: error.limit,
+              resets_at: error.resets_at,
+            },
+            null,
+            2,
+          )}\n`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const parts: string[] = [];
+      if (error.scope !== null) parts.push(`scope: ${error.scope}`);
+      if (error.limit !== null) parts.push(`limit: ${error.limit}`);
+      if (error.resets_at !== null) parts.push(`resets at: ${error.resets_at}`);
+      const extra = parts.length > 0 ? ` [${parts.join(", ")}]` : "";
+      process.stderr.write(`cswarm: ${safeError(error)}${extra}\n`);
+      process.exitCode = exitCodeFor(error);
+      return;
+    }
     process.stderr.write(`cswarm: ${safeError(error)}\n`);
     process.exitCode = exitCodeFor(error);
   });

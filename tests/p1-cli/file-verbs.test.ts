@@ -487,6 +487,7 @@ interface FakeCloud {
   storagePuts: Array<{ path: string; bytes: Buffer }>;
   reads: number;
   failFirstCreate: boolean;
+  createRefusal?: { status: number; body: Record<string, unknown> };
   server: Server;
   close(): Promise<void>;
 }
@@ -558,6 +559,11 @@ async function startFakeCloud(): Promise<FakeCloud> {
           if (state.failFirstCreate && createAttempts === 1) {
             // The unknown-outcome class: the socket dies before any response.
             request.socket.destroy();
+            return;
+          }
+          if (state.createRefusal) {
+            response.writeHead(state.createRefusal.status, { "content-type": "application/json" });
+            response.end(JSON.stringify(state.createRefusal.body));
             return;
           }
         }
@@ -950,5 +956,77 @@ test("the usage block names every file verb", async () => {
   const result = await cli(["--help"]);
   for (const verb of ["file put", "file ls", "file get", "file rm", "file restore"]) {
     assert.match(result.stdout + result.stderr, new RegExp(`cswarm ${verb}`));
+  }
+});
+
+test("cli process surfaces workspace rate limit refusal with scope, limit, resets_at in --json and human text", async () => {
+  const cloud = await startFakeCloud();
+  cloud.createRefusal = {
+    status: 429,
+    body: {
+      error: "rate_limited",
+      message: "Upload refused: file workspace limit 2000 uploads/hour.",
+      limit: 2000,
+      resets_at: "2026-09-13T07:00:00.000Z",
+      scope: "workspace",
+    },
+  };
+  try {
+    const localPath = join(scratch, "rate-limit-ws.md");
+    writeFileSync(localPath, "# workspace rate limit test\n");
+
+    // 1. JSON output across CLI process boundary
+    const jsonResult = await cliAgainst(cloud, ["file", "put", localPath, "--json"]);
+    assert.equal(jsonResult.code, 1);
+    const parsed = JSON.parse(jsonResult.stdout) as Record<string, unknown>;
+    assert.equal(parsed.error, "rate_limited");
+    assert.equal(parsed.scope, "workspace");
+    assert.equal(parsed.limit, 2000);
+    assert.equal(parsed.resets_at, "2026-09-13T07:00:00.000Z");
+
+    // 2. Human text across CLI process boundary
+    const humanResult = await cliAgainst(cloud, ["file", "put", localPath]);
+    assert.equal(humanResult.code, 1);
+    assert.match(humanResult.stderr, /scope:\s*workspace/);
+    assert.match(humanResult.stderr, /limit:\s*2000/);
+    assert.match(humanResult.stderr, /resets at:\s*2026-09-13T07:00:00\.000Z/);
+  } finally {
+    await cloud.close();
+  }
+});
+
+test("cli process surfaces identity rate limit refusal with scope, limit, resets_at in --json and human text", async () => {
+  const cloud = await startFakeCloud();
+  cloud.createRefusal = {
+    status: 429,
+    body: {
+      error: "rate_limited",
+      message: "Upload refused: file identity limit 600 uploads/hour.",
+      limit: 600,
+      resets_at: "2026-09-13T07:00:00.000Z",
+      scope: "identity",
+    },
+  };
+  try {
+    const localPath = join(scratch, "rate-limit-id.md");
+    writeFileSync(localPath, "# identity rate limit test\n");
+
+    // 1. JSON output across CLI process boundary
+    const jsonResult = await cliAgainst(cloud, ["file", "put", localPath, "--json"]);
+    assert.equal(jsonResult.code, 1);
+    const parsed = JSON.parse(jsonResult.stdout) as Record<string, unknown>;
+    assert.equal(parsed.error, "rate_limited");
+    assert.equal(parsed.scope, "identity");
+    assert.equal(parsed.limit, 600);
+    assert.equal(parsed.resets_at, "2026-09-13T07:00:00.000Z");
+
+    // 2. Human text across CLI process boundary
+    const humanResult = await cliAgainst(cloud, ["file", "put", localPath]);
+    assert.equal(humanResult.code, 1);
+    assert.match(humanResult.stderr, /scope:\s*identity/);
+    assert.match(humanResult.stderr, /limit:\s*600/);
+    assert.match(humanResult.stderr, /resets at:\s*2026-09-13T07:00:00\.000Z/);
+  } finally {
+    await cloud.close();
   }
 });

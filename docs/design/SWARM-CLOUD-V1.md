@@ -1,5 +1,7 @@
 # SWARM CLOUD — specification (final, security-hardened)
 
+> **HISTORICAL SPECIFICATION:** This document is HISTORICAL. The canonical specification is [`docs/design/SWARM-CLOUD.md`](./SWARM-CLOUD.md), which governs on conflict. The §2.8 storage, bucket, and signed-URL claims in this document were retired on 2026-09-13 — see `docs/design/SWARM-CLOUD.md` §2.8 for the active implementation and true properties.
+>
 > **Superseded in part by D-044, 2026-08-04:** the local inbound-authorization sandbox and its
 > zero-tool launch controls below are historical. Cross-owner messages use the operator's existing
 > worker and project context with provenance and an advisory confirmation steer. Server authority is

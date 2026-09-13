@@ -1827,4 +1827,3 @@ test("workspace rate counter does not split on UUID letter case: uppercase and l
     WHERE bucket_key = ${idKey}
   `;
 });
-

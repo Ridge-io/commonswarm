@@ -71,8 +71,8 @@ export const FILE_MAX_VERSIONS_PER_NAME = BRAIN_LIVE_VERSION_LIMIT;
 // size or digest parameter, so the URL binds neither size nor digest.
 // The bucket file_size_limit (FILE_MAX_VERSION_BYTES = 25 MiB) acts as the outer maximum bound
 // enforced by Storage at upload time. Commit refuses an object larger than declared
-// (file_size_exceeds_declaration); a smaller object is accepted because the declaration
-// gated the quota and a short upload costs nobody anything.
+// (file_size_exceeds_declaration); an object smaller than its declaration is accepted
+// rather than refused because the declaration already gated the quota.
 // See the brain topic file-upload-limits and docs/design/2026-08-18-FILE-ARTIFACTS.md.
 export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 600;
 
@@ -790,8 +790,8 @@ export async function fileVersionCommit(
   // What is bound where: the signed upload URL itself binds neither size nor digest.
   // The storage bucket's 25 MiB limit provides the outer maximum bound at upload time.
   // Measured size vs declaration is enforced here at commit: refuses an object larger
-  // than declared (file_size_exceeds_declaration); a smaller object is accepted because
-  // the declaration gated the quota and a short upload costs nobody anything.
+  // than declared (file_size_exceeds_declaration); an object smaller than its declaration is accepted
+  // rather than refused because the declaration already gated the quota.
   const measured = await storage.objectSize(version.storage_path);
   if (measured === null) {
     return refuse(
