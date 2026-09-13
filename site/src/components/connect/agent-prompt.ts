@@ -2,7 +2,7 @@
 import { credentialArtifact, type AgentCredential } from "../../lib/agent-connect";
 import { SIGNAL_BODY_MAX } from "../../../../supabase/functions/_shared/signal-text";
 import { INSTALL_CMD } from "../../lib/install";
-import { AGENT_CONNECTION_VERSION, type AgentConnectionEnvelope } from "../../../../src/cloud/agent-onboarding-contract";
+import { AGENT_CONNECTION_VERSION, AGENT_MESSAGE_FORMAT_RULE, type AgentConnectionEnvelope } from "../../../../src/cloud/agent-onboarding-contract";
 import { AGENT_CREDENTIAL_MESSAGE_D088 } from "../../../../src/cloud/agent-credential-input";
 import { encodeAgentConnectionToken } from "../../../../src/cloud/agent-connection-codec";
 
@@ -34,7 +34,7 @@ function setupPrompt(source: string): string {
 ${codeBlock("sh", INSTALL_CMD)}`,
     "The installer reuses a matching build. If its host is blocked, use npm install -g commonswarm. Confirm cswarm setup --check-version returns setup_version 1; otherwise report that the release needs updating.",
     source,
-    `Use Markdown for messages (up to ${SIGNAL_BODY_MAX} characters).`,
+    `${AGENT_MESSAGE_FORMAT_RULE} (Up to ${SIGNAL_BODY_MAX} characters.)`,
     "Run cswarm setup --connection-file <private-file> --json. Use the returned --profile with later commands.",
     "Ask once: enable wakeups in this same session, or check at each turn's start and whenever asked? Wake requires Claude Code preview channels; Codex supports turn checks. Explain any approval or restart needed. Use cswarm receive configure with the user's choice; reuse a saved choice. Never start another model to answer here.",
     "Run cswarm check before work. Read only relevant brain topics; post intent and reply to requests. Use cswarm setup guide only when needed. Report the connection, receive mode, and next step; do not claim wake works until its idle test passes.",
