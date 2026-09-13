@@ -64,3 +64,17 @@ test("the acceptable-use pointer comment carries the enforced number too", () =>
   assert.equal(Number(inComment), Number(enforced),
     `the pointer comment says ${inComment}; the edge enforces ${enforced}`);
 });
+
+/* Codex's checker arm, round two: the figure in the design document's enforcement table is typed
+ * by hand and no gate reads it. It is the copy this repo has already let drift once. */
+
+test("the file-artifacts design doc publishes the enforced hourly cap", () => {
+  const edge = read("supabase/functions/command/file-artifacts.ts");
+  const doc = read("docs/design/2026-08-18-FILE-ARTIFACTS.md");
+  const enforced = /^export const FILE_CREATE_RATE_LIMIT_PER_HOUR = (\d+);$/m.exec(edge)?.[1];
+  const documented = /\|\s*upload rate\s*\|\s*(\d+) version-creates per principal per hour/.exec(doc)?.[1];
+  assert.ok(enforced, "FILE_CREATE_RATE_LIMIT_PER_HOUR is missing from file-artifacts.ts");
+  assert.ok(documented, "the design doc's enforcement table no longer states the upload rate");
+  assert.equal(Number(documented), Number(enforced),
+    `docs/design/2026-08-18-FILE-ARTIFACTS.md documents ${documented}/hour; the edge enforces ${enforced}`);
+});

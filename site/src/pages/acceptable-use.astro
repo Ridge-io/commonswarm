@@ -23,21 +23,22 @@
  *
  * THE NUMBERS ARE READ OUT OF THE CODE, NOT ASSUMED:
  *   10 live workspaces per verified identity -> FREE_TIER_WORKSPACE_LIMIT,
- *                                               supabase/functions/command/index.ts:554
+ *                                               supabase/functions/command/index.ts:695
  *                                              (the query excludes archived_at rows, but
  *                                              no product command archives a workspace)
- *   120 signals / credential / hour         -> SIGNAL_CREDENTIAL_LIMIT, :341
- *   1000 signals / workspace / hour         -> SIGNAL_WORKSPACE_LIMIT, :342
- *   hourly window, not rolling              -> incrementRateBucket, :3347 uses
+ *   120 signals / credential / hour         -> SIGNAL_CREDENTIAL_LIMIT, :601
+ *   1000 signals / workspace / hour         -> SIGNAL_WORKSPACE_LIMIT, :602
+ *   fixed clock hour, not rolling           -> incrementRateBucket, :4918 uses
  *                                              date_trunc('hour', ...)
  *   body 1-8000, about <= 500, until <= 30d -> migrations/20260827000001_expand_signal_body.sql
- *   invitation TTL <= 7 days                -> INVITATION_MAX_TTL_MS, :333
- *   agent credential TTL <= 24 hours        -> AGENT_TOKEN_MAX_TTL_MS, :334
+ *   invitation TTL <= 7 days                -> INVITATION_MAX_TTL_MS, :586
+ *   agent credential TTL <= 30 days         -> AGENT_TOKEN_MAX_TTL_MS, :591
+ *   (24 hours is the DEFAULT, not the maximum; the prose below says both)
  *   file version <= 25 MB                   -> FILE_MAX_VERSION_BYTES,
  *   workspace file bytes <= 1 GB,              supabase/functions/command/file-artifacts.ts:52-55
  *   500 unpurged names / workspace,          -> FILE_WORKSPACE_MAX_NAMES,
  *   20 live or in-flight versions / name,       FILE_MAX_VERSIONS_PER_NAME, :55
- *   600 version creates / principal / hour   -> FILE_CREATE_RATE_LIMIT_PER_HOUR, :69
+ *   600 version creates / principal / hour   -> FILE_CREATE_RATE_LIMIT_PER_HOUR, :72
  * If any of these change in the code, they change here. A published cap that no longer
  * matches the enforced one is worse than no published cap.
  *

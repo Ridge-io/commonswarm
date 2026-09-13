@@ -78,7 +78,9 @@ Backend: **Supabase Storage** (already in the project, currently unused), one pr
 is the authority; the bucket is a blob store that nothing trusts on its own — the durable
 row, not the object, decides what exists (durable-by-default doctrine).
 
-Proposed caps, all enforced server-side at version-create time:
+Proposed caps, all enforced server-side. Most are checked at version-create time; the per-version
+BYTE cap and a brain topic's live-version retirement are settled at COMMIT, because the real object
+size is only known once the bytes are there (`file-artifacts.ts`, `objectSize` at commit):
 
 | cap | value | why |
 |---|---|---|

@@ -62,10 +62,13 @@ export const FILE_MAX_VERSIONS_PER_NAME = BRAIN_LIVE_VERSION_LIMIT;
 // seconds and a whole bucket again the moment the hour turns. Do not read it as a per-minute rate.
 //
 // It is also NOT what bounds stored bytes. FILE_WORKSPACE_MAX_BYTES, FILE_WORKSPACE_MAX_NAMES
-// and FILE_MAX_VERSIONS_PER_NAME bound how much can sit; this bounds only how many grants an
-// identity may take. The 25 MB per-version cap is measured at COMMIT, not bound into the signed
-// upload, so raising this number widens the uncommitted-object window twentyfold.
-// See docs/design/2026-08-18-FILE-ARTIFACTS.md.
+// and FILE_MAX_VERSIONS_PER_NAME bound how much can sit. What this bounds is validated create
+// ATTEMPTS: incrementRateBucket runs before fileVersionCreate, so a size, quota, type, tombstone
+// or version-cap refusal still spends from the bucket.
+//
+// FILE_MAX_VERSION_BYTES is measured at COMMIT and is not bound into the signed upload, so
+// raising this number widens the uncommitted-object window by the same factor.
+// See the brain topic file-upload-limits and docs/design/2026-08-18-FILE-ARTIFACTS.md.
 export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 600;
 
 export const FILE_BUCKET = "swarm-files";
