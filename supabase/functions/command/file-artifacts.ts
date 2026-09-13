@@ -53,10 +53,19 @@ export const FILE_MAX_VERSION_BYTES = 25 * 1024 * 1024;
 export const FILE_WORKSPACE_MAX_BYTES = 1024 * 1024 * 1024;
 export const FILE_WORKSPACE_MAX_NAMES = 500;
 export const FILE_MAX_VERSIONS_PER_NAME = BRAIN_LIVE_VERSION_LIMIT;
-// Per identity (agent principal or user) per hour, on file_create; brain topics are files,
-// so `brain put` counts too. 30 tripped on 2026-09-10 while migrating one workspace's brain
-// and files (27 topics + 32 files in one sitting). Operator ruling that day: raise it by a lot.
-// 600 keeps a runaway loop bounded (ten a minute) without touching real work.
+// Per identity (agent principal or user), on file_version_create. Brain topics are files, so
+// `brain put` and signal attachments draw on the same bucket. 30 tripped on 2026-09-10 while
+// migrating one workspace's brain and files. Operator ruling that day: raise it by a lot.
+//
+// THIS IS A FIXED CLOCK-HOUR BUCKET, NOT A PACE. incrementRateBucket keys on
+// date_trunc('hour', statement_timestamp()), so an identity may spend a whole bucket in
+// seconds and a whole bucket again the moment the hour turns. Do not read it as a per-minute rate.
+//
+// It is also NOT what bounds stored bytes. FILE_WORKSPACE_MAX_BYTES, FILE_WORKSPACE_MAX_NAMES
+// and FILE_MAX_VERSIONS_PER_NAME bound how much can sit; this bounds only how many grants an
+// identity may take. The 25 MB per-version cap is measured at COMMIT, not bound into the signed
+// upload, so raising this number widens the uncommitted-object window twentyfold.
+// See docs/design/2026-08-18-FILE-ARTIFACTS.md.
 export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 600;
 
 export const FILE_BUCKET = "swarm-files";

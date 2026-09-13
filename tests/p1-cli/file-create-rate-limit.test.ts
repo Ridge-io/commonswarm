@@ -41,3 +41,26 @@ test("the acceptable-use comment points at the line the constant is really on", 
   assert.ok(cited, "acceptable-use no longer cites a line for FILE_CREATE_RATE_LIMIT_PER_HOUR");
   assert.equal(Number(cited), actual, `acceptable-use cites :${cited}; the constant is on line ${actual}`);
 });
+
+/* Grok's checker arm, 2026-09-12: the two gates above still pass if the ENFORCEMENT stops reading
+ * the constant and hardcodes a number, and they ignore the same figure in the page's own pointer
+ * comment. Both are the drift this file exists to catch, so both get a control. */
+
+test("the edge enforcement reads the constant rather than a literal", () => {
+  const index = read("supabase/functions/command/index.ts");
+  const guard = /if \(bucket\.count > FILE_CREATE_RATE_LIMIT_PER_HOUR\)/.test(index);
+  const passed = /incrementRateBucket\([\s\S]{0,200}?FILE_CREATE_RATE_LIMIT_PER_HOUR,/.test(index);
+  assert.ok(guard, "the file-create refusal no longer compares against FILE_CREATE_RATE_LIMIT_PER_HOUR");
+  assert.ok(passed, "incrementRateBucket is no longer given FILE_CREATE_RATE_LIMIT_PER_HOUR as its limit");
+});
+
+test("the acceptable-use pointer comment carries the enforced number too", () => {
+  const edge = read("supabase/functions/command/file-artifacts.ts");
+  const page = read("site/src/pages/acceptable-use.astro");
+  const enforced = /^export const FILE_CREATE_RATE_LIMIT_PER_HOUR = (\d+);$/m.exec(edge)?.[1];
+  const inComment = /\*\s+(\d+) version creates \/ principal \/ hour/.exec(page)?.[1];
+  assert.ok(enforced, "FILE_CREATE_RATE_LIMIT_PER_HOUR is missing from file-artifacts.ts");
+  assert.ok(inComment, "the acceptable-use pointer comment no longer carries the file-create cap");
+  assert.equal(Number(inComment), Number(enforced),
+    `the pointer comment says ${inComment}; the edge enforces ${enforced}`);
+});
