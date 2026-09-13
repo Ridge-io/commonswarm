@@ -66,10 +66,26 @@ export const FILE_MAX_VERSIONS_PER_NAME = BRAIN_LIVE_VERSION_LIMIT;
 // ATTEMPTS: incrementRateBucket runs before fileVersionCreate, so a size, quota, type, tombstone
 // or version-cap refusal still spends from the bucket.
 //
-// FILE_MAX_VERSION_BYTES is measured at COMMIT and is not bound into the signed upload, so
-// raising this number widens the uncommitted-object window by the same factor.
+// FILE_MAX_VERSION_BYTES is bound at the storage bucket (Item C) and re-checked at COMMIT as
+// defence in depth.
 // See the brain topic file-upload-limits and docs/design/2026-08-18-FILE-ARTIFACTS.md.
 export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 600;
+
+// Per-workspace fairness ceiling on file_version_create (docs/design/SWARM-CLOUD.md §2.8).
+//
+// 2000 is ~34x the busiest workspace-hour ever measured in production (58, the 2026-09-10
+// brain migration).
+//
+// It bounds the previously unbounded worst case (50 principals x 600 = 30,000) by 15x.
+//
+// A single identity at its full 600 takes at most 30% of the workspace's hour, so one member
+// cannot exhaust the workspace and block everyone else's evidence, which is the purpose §2.8 states.
+//
+// THIS IS A FIXED CLOCK-HOUR BUCKET, NOT A PACE. incrementRateBucket keys on
+// date_trunc('hour', statement_timestamp()), so it bounds grants per hour, not pace, and
+// allows a double burst across an hour boundary. Like the per-identity limit, it bounds
+// validated create attempts.
+export const FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR = 2000;
 
 export const FILE_BUCKET = "swarm-files";
 export const FILE_DOWNLOAD_URL_TTL_SECONDS = 300;
