@@ -1,6 +1,6 @@
 # File artifacts — specification and implementation plan
 
-**Status: IMPLEMENTED / LANDED (2026-08-18, enforced 2026-09-13). File artifacts, ceilings, and quotas are built and enforced server-side.** Operator directive: agents need to
+**Status: IMPLEMENTED and enforced server-side.** File artifacts and the per-identity cap landed 2026-08-18. The workspace ceiling and the bucket size limit are enforced from the release that carries this file; until that release is deployed, read the numbers here as the code's intent rather than production state. Operator directive: agents need to
 review file artifacts — plan markdown, Word documents, Excel sheets — so agents must be able
 to upload, store, download, and manage files in the workspace.
 
@@ -88,7 +88,7 @@ size is only known once the bytes are there (`file-artifacts.ts`, `objectSize` a
 | per-workspace total | 1 GB | ~40× the per-file cap; a coordination store, not a drive. Free-tier arithmetic: 10 workspaces per account stays bounded |
 | per-workspace file count | 500 names; normal files keep 20 live or in-flight versions per name; brain topics keep a rolling 20 live versions | keeps `file ls` bounded without forcing a living brain topic to change its name |
 | upload rate | 600 version-creates per identity per hour | same family as existing signal rate limits. Raised from 30 by operator ruling of 2026-09-10, after 30 stopped a workspace migration; landed 2026-09-12. It is a FIXED clock-hour bucket, so it bounds create attempts per hour, not pace, and allows a double burst across an hour boundary; the byte and name caps above are what bound what can sit |
-| workspace upload ceiling | 2000 version-creates per workspace per hour | ceiling under docs/design/SWARM-CLOUD.md §2.8. 2000 is ~34× the busiest workspace-hour ever measured in production (58, the 2026-09-10 brain migration) and bounds the worst case (FREE_TIER_MEMBER_LIMIT 25 + FREE_TIER_PRINCIPAL_LIMIT 50 = 75 identities × 600 = 45,000) by 22×. The ceiling bounds a workspace's total per hour, which was previously unbounded, and it does NOT provide per-member fairness, which would need an owner-scoped bucket and is filed as its own item. It is a FIXED clock-hour bucket, bounding create attempts per hour, not pace |
+| workspace upload ceiling | 2000 version-creates per workspace per hour | ceiling under docs/design/SWARM-CLOUD.md §2.8. 2000 is ~34× the busiest workspace-hour ever measured in production (58, the 2026-09-10 brain migration) and bounds the worst case (FREE_TIER_MEMBER_LIMIT 25 + FREE_TIER_PRINCIPAL_LIMIT 50 = 75 identities × 600 = 45,000) by 22×. The ceiling bounds a workspace's total per hour, which previously had no workspace-scoped ceiling, and it does NOT provide per-member fairness, which would need an owner-scoped bucket and is filed as its own item. It is a FIXED clock-hour bucket, bounding create attempts per hour, not pace |
 
 Exceeding a cap is a refusal with the number in it ("this file is 31 MB; the per-file limit
 is 25 MB"), not a bare status.

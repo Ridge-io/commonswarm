@@ -85,10 +85,10 @@ export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 600;
 // 2000 is ~34x the busiest workspace-hour ever measured in production (58, the 2026-09-10
 // brain migration).
 //
-// It bounds the previously unbounded worst case (FREE_TIER_MEMBER_LIMIT 25 +
+// It bounds the previously had no workspace-scoped ceiling worst case (FREE_TIER_MEMBER_LIMIT 25 +
 // FREE_TIER_PRINCIPAL_LIMIT 50 = 75 identities x 600 = 45,000) by 22x.
 //
-// The ceiling bounds a workspace's total creates per hour, which was previously unbounded.
+// The ceiling bounds a workspace's total creates per hour, which was previously had no workspace-scoped ceiling.
 // It does NOT provide per-member fairness: a member can own several principals, so one member
 // can spend all 2,000. True per-member fairness would need an owner-scoped bucket and is filed
 // as its own item.
