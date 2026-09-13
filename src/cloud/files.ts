@@ -85,6 +85,9 @@ export class FileCommandRefused extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly scope: string | null = null,
+    readonly limit: number | null = null,
+    readonly resets_at: string | null = null,
   ) {
     super(message);
   }
@@ -244,7 +247,10 @@ async function sendFileCommand<T>(
     const message = typeof body?.message === "string"
       ? body.message
       : `file command failed (HTTP ${response.status}) DEBUGBODY=${JSON.stringify(body).slice(0, 300)}`;
-    throw new FileCommandRefused(response.status, code, message);
+    const scope = typeof body?.scope === "string" ? body.scope : null;
+    const limit = typeof body?.limit === "number" ? body.limit : null;
+    const resets_at = typeof body?.resets_at === "string" ? body.resets_at : null;
+    throw new FileCommandRefused(response.status, code, message, scope, limit, resets_at);
   }
   if (!body || typeof body !== "object") {
     throw new FileTransportError("file command returned a malformed response");

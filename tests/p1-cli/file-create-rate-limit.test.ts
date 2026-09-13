@@ -22,13 +22,13 @@ test("acceptable-use publishes the enforced file-create hourly cap", () => {
   const edge = read("supabase/functions/command/file-artifacts.ts");
   const page = read("site/src/pages/acceptable-use.astro");
   const enforced = /^export const FILE_CREATE_RATE_LIMIT_PER_HOUR = (\d+);$/m.exec(edge)?.[1];
-  const published = /(?:and |, )?(\d+) version creates per principal per hour/.exec(page)?.[1];
+  const published = /(?:and |, )?(\d+) version creates per identity per hour/.exec(page)?.[1];
   assert.ok(enforced, "FILE_CREATE_RATE_LIMIT_PER_HOUR is missing from file-artifacts.ts");
   assert.ok(published, "acceptable-use no longer carries the file-create hourly cap sentence");
   assert.equal(
     Number(published),
     Number(enforced),
-    `acceptable-use publishes ${published} version creates per principal per hour; the edge enforces ${enforced}`,
+    `acceptable-use publishes ${published} version creates per identity per hour; the edge enforces ${enforced}`,
   );
 });
 
@@ -58,7 +58,7 @@ test("the acceptable-use pointer comment carries the enforced number too", () =>
   const edge = read("supabase/functions/command/file-artifacts.ts");
   const page = read("site/src/pages/acceptable-use.astro");
   const enforced = /^export const FILE_CREATE_RATE_LIMIT_PER_HOUR = (\d+);$/m.exec(edge)?.[1];
-  const inComment = /\*\s+(\d+) version creates \/ principal \/ hour/.exec(page)?.[1];
+  const inComment = /\*\s+(\d+) version creates \/ identity \/ hour/.exec(page)?.[1];
   assert.ok(enforced, "FILE_CREATE_RATE_LIMIT_PER_HOUR is missing from file-artifacts.ts");
   assert.ok(inComment, "the acceptable-use pointer comment no longer carries the file-create cap");
   assert.equal(Number(inComment), Number(enforced),
@@ -72,7 +72,7 @@ test("the file-artifacts design doc publishes the enforced hourly cap", () => {
   const edge = read("supabase/functions/command/file-artifacts.ts");
   const doc = read("docs/design/2026-08-18-FILE-ARTIFACTS.md");
   const enforced = /^export const FILE_CREATE_RATE_LIMIT_PER_HOUR = (\d+);$/m.exec(edge)?.[1];
-  const documented = /\|\s*upload rate\s*\|\s*(\d+) version-creates per principal per hour/.exec(doc)?.[1];
+  const documented = /\|\s*upload rate\s*\|\s*(\d+) version-creates per identity per hour/.exec(doc)?.[1];
   assert.ok(enforced, "FILE_CREATE_RATE_LIMIT_PER_HOUR is missing from file-artifacts.ts");
   assert.ok(documented, "the design doc's enforcement table no longer states the upload rate");
   assert.equal(Number(documented), Number(enforced),
@@ -95,7 +95,7 @@ test("the rate bucket is spent before the create runs, so refusals count", () =>
   );
 });
 
-/* Item C: workspace file-create fairness ceiling controls (docs/design/SWARM-CLOUD.md §2.8). */
+/* Item C: workspace file-create ceiling controls (docs/design/SWARM-CLOUD.md §2.8). */
 
 test("acceptable-use publishes the enforced file-create workspace hourly ceiling", () => {
   const edge = read("supabase/functions/command/file-artifacts.ts");
@@ -210,4 +210,14 @@ test("file create comments and design doc state correct free-tier aggregate arit
   assert.ok(doc.includes("45,000"), "FILE-ARTIFACTS.md does not state 45,000 aggregate");
   assert.ok(!edge.includes("one member cannot exhaust the workspace"), "file-artifacts.ts still claims one member cannot exhaust the workspace");
   assert.ok(!doc.includes("one member cannot exhaust the workspace"), "FILE-ARTIFACTS.md still claims one member cannot exhaust the workspace");
+  assert.ok(!doc.includes("600 version-creates per principal per hour"), "FILE-ARTIFACTS.md still states per principal");
+  assert.ok(doc.includes("600 version-creates per identity per hour"), "FILE-ARTIFACTS.md does not state per identity");
+});
+
+test("FileCommandRefused carries machine-readable scope, limit and resets_at", () => {
+  const client = read("src/cloud/files.ts");
+  assert.match(client, /readonly\s+scope:\s*string\s*\|\s*null/);
+  assert.match(client, /readonly\s+limit:\s*number\s*\|\s*null/);
+  assert.match(client, /readonly\s+resets_at:\s*string\s*\|\s*null/);
+  assert.match(client, /new\s+FileCommandRefused\([\s\S]*?scope,[\s\S]*?limit,[\s\S]*?resets_at\)/);
 });

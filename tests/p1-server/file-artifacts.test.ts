@@ -18,6 +18,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import postgres from "postgres";
 import { awaitFunctionRunning } from "../support/edge-readiness.js";
+import { FileCommandRefused, fileVersionCreate } from "../../src/cloud/files.js";
+import { cloudTarget } from "../../src/cloud/config.js";
 
 interface LocalEnvironment {
   API_URL: string;
@@ -1647,7 +1649,34 @@ test("workspace create ceiling: 2001st create in an hour is refused with scope=w
   assert.ok(typeof res.body.resets_at === "string", "resets_at must be present");
   assert.match(String(res.body.message), /file workspace limit 2000 uploads\/hour/);
 
-  // Verify that the identity bucket is well under 600 (it incremented to 1)
+  // Assert client function fileVersionCreate carries scope: "workspace" end to end
+  await assert.rejects(
+    fileVersionCreate(
+      {
+        target: cloudTarget(local.API_URL, local.ANON_KEY),
+        workspaceId: wsId,
+        credential: f.uaJwt,
+      },
+      {
+        fileId: randomUUID(),
+        versionId: randomUUID(),
+        name: "client-ws-refusal.md",
+        declaredSizeBytes: 100,
+        contentType: "text/markdown",
+      },
+    ),
+    (err: unknown) => {
+      assert.ok(err instanceof FileCommandRefused);
+      assert.equal(err.status, 429);
+      assert.equal(err.code, "rate_limited");
+      assert.equal(err.scope, "workspace");
+      assert.equal(err.limit, 2000);
+      assert.ok(typeof err.resets_at === "string");
+      return true;
+    },
+  );
+
+  // Verify that the identity bucket is well under 600 (it incremented to 2)
   const idRows = await sql<{ count: number }[]>`
     SELECT count FROM swarm.rate_buckets
     WHERE bucket_key = ${idKey}
@@ -1705,6 +1734,33 @@ test("identity create limit: 601st create in an hour is refused with scope=ident
   assert.equal(res.body.scope, "identity");
   assert.ok(typeof res.body.resets_at === "string", "resets_at must be present");
   assert.match(String(res.body.message), /file identity limit 600 uploads\/hour/);
+
+  // Assert client function fileVersionCreate carries scope: "identity" end to end
+  await assert.rejects(
+    fileVersionCreate(
+      {
+        target: cloudTarget(local.API_URL, local.ANON_KEY),
+        workspaceId: wsId,
+        credential: f.uaJwt,
+      },
+      {
+        fileId: randomUUID(),
+        versionId: randomUUID(),
+        name: "client-id-refusal.md",
+        declaredSizeBytes: 100,
+        contentType: "text/markdown",
+      },
+    ),
+    (err: unknown) => {
+      assert.ok(err instanceof FileCommandRefused);
+      assert.equal(err.status, 429);
+      assert.equal(err.code, "rate_limited");
+      assert.equal(err.scope, "identity");
+      assert.equal(err.limit, 600);
+      assert.ok(typeof err.resets_at === "string");
+      return true;
+    },
+  );
 
   await sql`
     DELETE FROM swarm.rate_buckets

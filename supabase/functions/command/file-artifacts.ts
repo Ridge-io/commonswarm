@@ -70,9 +70,9 @@ export const FILE_MAX_VERSIONS_PER_NAME = BRAIN_LIVE_VERSION_LIMIT;
 // The signed upload URL itself binds only the path; Supabase signed upload URLs carry no per-URL
 // size or digest parameter, so the URL binds neither size nor digest.
 // The bucket file_size_limit (FILE_MAX_VERSION_BYTES = 25 MiB) acts as the outer maximum bound
-// enforced by Storage at upload time. Declared-size agreement is enforced at COMMIT by comparing
-// the measured size against the create request's declaration and refusing mismatches with
-// file_size_exceeds_declaration.
+// enforced by Storage at upload time. Commit refuses an object larger than declared
+// (file_size_exceeds_declaration); a smaller object is accepted because the declaration
+// gated the quota and a short upload costs nobody anything.
 // See the brain topic file-upload-limits and docs/design/2026-08-18-FILE-ARTIFACTS.md.
 export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 600;
 
@@ -789,8 +789,9 @@ export async function fileVersionCommit(
   }
   // What is bound where: the signed upload URL itself binds neither size nor digest.
   // The storage bucket's 25 MiB limit provides the outer maximum bound at upload time.
-  // Declared-size agreement is enforced here at commit: compare the measured size against
-  // what the create request declared, refusing a mismatch with file_size_exceeds_declaration.
+  // Measured size vs declaration is enforced here at commit: refuses an object larger
+  // than declared (file_size_exceeds_declaration); a smaller object is accepted because
+  // the declaration gated the quota and a short upload costs nobody anything.
   const measured = await storage.objectSize(version.storage_path);
   if (measured === null) {
     return refuse(

@@ -43,7 +43,7 @@
  *   500 unpurged names / workspace,          -> FILE_WORKSPACE_MAX_NAMES,
  *   20 live+in-flight / file name, but a         FILE_MAX_VERSIONS_PER_NAME, :55
  *   brain topic caps only in-flight             (src/protocol/brain-version-window.ts)
- *   600 version creates / principal / hour   -> FILE_CREATE_RATE_LIMIT_PER_HOUR, :77
+ *   600 version creates / identity / hour    -> FILE_CREATE_RATE_LIMIT_PER_HOUR, :77
  *   2000 version creates / ws / hour         -> FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR, :96
  * If any of these change in the code, they change here. A published cap that no longer
  * matches the enforced one is worse than no published cap.
@@ -148,7 +148,7 @@ const sections: Section[] = [
           "**1,000 signals per hour per workspace**, counted the same way.",
           "**8,000 characters** of signal body, **500 characters** of reference, and a signal lifetime of at most **30 days**.",
           "**Invitations expire within 7 days**; agent credentials within **30 days** at most.",
-          "**Workspace file artifacts:** 25 MB per version, 1 GB of unpurged versions per workspace, 500 unpurged names per workspace, 20 live or in-flight versions per file name — a brain topic instead keeps 20 live versions, plus any still in flight —, 600 version creates per principal per hour, and 2,000 version creates per workspace per hour, counted per clock hour.",
+          "**Workspace file artifacts:** 25 MB per version, 1 GB of unpurged versions per workspace, 500 unpurged names per workspace, 20 live or in-flight versions per file name — a brain topic instead keeps 20 live versions, plus any still in flight —, 600 version creates per identity per hour, and 2,000 version creates per workspace per hour, counted per clock hour.",
         ],
       },
       "These are the current enforced values, published so you can plan against them. They are **not commitments**. We may raise, lower, or replace any of them at any time without notice, we may apply limits that are not published here, and we may throttle or refuse traffic for any reason.",
