@@ -6932,7 +6932,7 @@ var init_agent_receive = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/util.js
+// node_modules/zod/v4/core/util.js
 var util_exports = {};
 __export(util_exports, {
   BIGINT_FORMAT_RANGES: () => BIGINT_FORMAT_RANGES,
@@ -7673,7 +7673,7 @@ function constantCatch(value) {
 }
 var EVALUATING, captureStackTrace, allowsEval, getParsedType, propertyKeyTypes, primitiveTypes, NUMBER_FORMAT_RANGES, BIGINT_FORMAT_RANGES, highSurrogate, Class, installing, broke, breaker, CONSTANT_CATCH;
 var init_util = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/util.js"() {
+  "node_modules/zod/v4/core/util.js"() {
     init_core();
     EVALUATING = /* @__PURE__ */ Symbol("evaluating");
     captureStackTrace = "captureStackTrace" in Error ? Error.captureStackTrace : (..._args) => {
@@ -7774,7 +7774,7 @@ var init_util = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/core.js
+// node_modules/zod/v4/core/core.js
 function newError(Definition) {
   const E = _E;
   if (E) {
@@ -7878,7 +7878,7 @@ function config(newConfig) {
 }
 var _a, _zodDesc, _E, $ZodAsyncError, $ZodEncodeError, globalConfig;
 var init_core = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/core.js"() {
+  "node_modules/zod/v4/core/core.js"() {
     init_util();
     _zodDesc = { value: void 0, enumerable: false };
     _E = "captureStackTrace" in Error ? Error : null;
@@ -7898,7 +7898,7 @@ var init_core = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/errors.js
+// node_modules/zod/v4/core/errors.js
 function _getMessage() {
   const internals = this._zod;
   internals.message ?? (internals.message = JSON.stringify(internals.def, jsonStringifyReplacer, 2));
@@ -7979,7 +7979,7 @@ function formatError(error2, mapper = (issue2) => issue2.message) {
 }
 var _messageDesc, _zodDesc2, _issuesDesc, _installedToString, initializer, $ZodError, $ZodRealError;
 var init_errors = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/errors.js"() {
+  "node_modules/zod/v4/core/errors.js"() {
     init_core();
     init_util();
     _messageDesc = {
@@ -8024,13 +8024,13 @@ var init_errors = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/parse.js
+// node_modules/zod/v4/core/parse.js
 function finalizeParams(callee, params) {
   return { callee: params?.callee ?? callee, Err: params?.Err };
 }
 var _parse, _parseAsync, _safeParse, safeParse, _safeParseAsync, safeParseAsync, _encode, _decode, _encodeAsync, _decodeAsync, _safeEncode, _safeDecode, _safeEncodeAsync, _safeDecodeAsync;
 var init_parse = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/parse.js"() {
+  "node_modules/zod/v4/core/parse.js"() {
     init_core();
     init_errors();
     init_util();
@@ -8135,7 +8135,7 @@ var init_parse = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/regexes.js
+// node_modules/zod/v4/core/regexes.js
 function nanoidOfLength(length) {
   return new RegExp(`^[a-zA-Z0-9_-]{${length}}$`);
 }
@@ -8163,7 +8163,7 @@ function datetime(args) {
 }
 var cuid, cuid2, ulid, xid, ksuid, nanoid, duration, guid, uuid2, email, _emoji, ipv4, ipv6, cidrv4, cidrv6, base64, base64url, httpProtocol, e164, dateSource, date, string, integer, number, boolean, _null, lowercase, uppercase;
 var init_regexes = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/regexes.js"() {
+  "node_modules/zod/v4/core/regexes.js"() {
     cuid = /^[cC][0-9a-z]{6,}$/;
     cuid2 = /^[0-9a-z]+$/;
     ulid = /^[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$/;
@@ -8202,10 +8202,10 @@ var init_regexes = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/checks.js
+// node_modules/zod/v4/core/checks.js
 var $ZodCheck, _whenHasLength, numericOriginMap, $ZodCheckLessThan, $ZodCheckGreaterThan, $ZodCheckMultipleOf, $ZodCheckNumberFormat, $ZodCheckMaxLength, $ZodCheckMinLength, $ZodCheckLengthEquals, $ZodCheckStringFormat, $ZodCheckRegex, $ZodCheckLowerCase, $ZodCheckUpperCase, $ZodCheckIncludes, $ZodCheckStartsWith, $ZodCheckEndsWith, $ZodCheckOverwrite;
 var init_checks = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/checks.js"() {
+  "node_modules/zod/v4/core/checks.js"() {
     init_core();
     init_regexes();
     init_util();
@@ -8601,10 +8601,10 @@ var init_checks = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/doc.js
+// node_modules/zod/v4/core/doc.js
 var Doc;
 var init_doc = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/doc.js"() {
+  "node_modules/zod/v4/core/doc.js"() {
     Doc = class {
       constructor(args = [], closed = {}) {
         this.content = [];
@@ -8643,10 +8643,10 @@ ${content.join("\n")}
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/versions.js
+// node_modules/zod/v4/core/versions.js
 var version;
 var init_versions = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/versions.js"() {
+  "node_modules/zod/v4/core/versions.js"() {
     version = {
       major: 4,
       minor: 5,
@@ -8655,7 +8655,7 @@ var init_versions = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/schemas.js
+// node_modules/zod/v4/core/schemas.js
 function standardProps(inst) {
   return {
     validate: (value) => {
@@ -9043,7 +9043,7 @@ function handleRefineResult(result, payload, input, inst) {
 }
 var $ZodType, toStandardResult, $ZodString, $ZodStringFormat, $ZodGUID, $ZodUUID, $ZodEmail, URL_BAD_FORMAT, URL_UNPARSEABLE, asciiTabOrNewline, $ZodURL, $ZodEmoji, $ZodNanoID, $ZodCUID, $ZodCUID2, $ZodULID, $ZodXID, $ZodKSUID, $ZodISODateTime, $ZodISODate, $ZodISOTime, $ZodISODuration, $ZodIPv4, ipv6Alphabet, $ZodIPv6, $ZodCIDRv4, $ZodCIDRv6, $ZodBase64, $ZodBase64URL, $ZodE164, $ZodJWT, $ZodNumber, $ZodNumberFormat, $ZodBoolean, $ZodNull, $ZodUnknown, $ZodNever, $ZodArray, NO_SYMBOL_KEYS, propShapes, $ZodObject, $ZodObjectJIT, $ZodUnion, $ZodDiscriminatedUnion, $ZodIntersection, $ZodRecord, $ZodEnum, $ZodLiteral, $ZodTransform, $ZodOptional, $ZodExactOptional, $ZodNullable, $ZodDefault, $ZodPrefault, $ZodNonOptional, $ZodCatch, $ZodPipe, $ZodPreprocess, $ZodReadonly, $ZodCustom;
 var init_schemas = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/schemas.js"() {
+  "node_modules/zod/v4/core/schemas.js"() {
     init_checks();
     init_core();
     init_doc();
@@ -10256,7 +10256,7 @@ var init_schemas = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/memoizer.js
+// node_modules/zod/v4/core/memoizer.js
 function cloneIssues(issues) {
   return issues.map((iss) => iss.path ? { ...iss, path: iss.path.slice() } : { ...iss });
 }
@@ -10389,7 +10389,7 @@ function isBackEdge(ctx, value) {
 }
 var $ZodCyclicError, STATE, NO_ISSUES, recursive, handoff, open3, memo;
 var init_memoizer = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/memoizer.js"() {
+  "node_modules/zod/v4/core/memoizer.js"() {
     $ZodCyclicError = class extends Error {
       constructor() {
         super(`Cannot parse a reference cycle that closes through a transform`);
@@ -10498,7 +10498,7 @@ var init_memoizer = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/locales/en.js
+// node_modules/zod/v4/locales/en.js
 function en_default() {
   return {
     localeError: error()
@@ -10506,7 +10506,7 @@ function en_default() {
 }
 var error;
 var init_en = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/locales/en.js"() {
+  "node_modules/zod/v4/locales/en.js"() {
     init_util();
     error = () => {
       const Sizable = {
@@ -10627,19 +10627,19 @@ var init_en = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/locales/index.js
+// node_modules/zod/v4/locales/index.js
 var init_locales = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/locales/index.js"() {
+  "node_modules/zod/v4/locales/index.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/registries.js
+// node_modules/zod/v4/core/registries.js
 function registry2() {
   return new $ZodRegistry();
 }
 var _a2, $ZodRegistry, globalRegistry;
 var init_registries = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/registries.js"() {
+  "node_modules/zod/v4/core/registries.js"() {
     $ZodRegistry = class {
       constructor() {
         this._map = /* @__PURE__ */ new WeakMap();
@@ -10685,13 +10685,13 @@ var init_registries = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/compile.js
+// node_modules/zod/v4/core/compile.js
 var init_compile = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/compile.js"() {
+  "node_modules/zod/v4/core/compile.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/api.js
+// node_modules/zod/v4/core/api.js
 // @__NO_SIDE_EFFECTS__
 function _string(Class2, params) {
   return new Class2({
@@ -11220,13 +11220,13 @@ function _check(fn, params) {
   return ch;
 }
 var init_api = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/api.js"() {
+  "node_modules/zod/v4/core/api.js"() {
     init_checks();
     init_util();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/to-json-schema.js
+// node_modules/zod/v4/core/to-json-schema.js
 function assignProps(target2, ...sources) {
   for (const source of sources) {
     for (const key2 of Reflect.ownKeys(source)) {
@@ -11743,7 +11743,7 @@ function isTransforming(_schema, _ctx) {
 }
 var FOLDABLE_KEYS, UNION_KEYS, createToJSONSchemaMethod, createStandardJSONSchemaMethod;
 var init_to_json_schema = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/to-json-schema.js"() {
+  "node_modules/zod/v4/core/to-json-schema.js"() {
     init_registries();
     init_util();
     FOLDABLE_KEYS = /* @__PURE__ */ new Set(["type", "properties", "required", "additionalProperties"]);
@@ -11764,7 +11764,7 @@ var init_to_json_schema = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/json-schema-processors.js
+// node_modules/zod/v4/core/json-schema-processors.js
 function inputOptin(schema) {
   const def = schema._zod.def;
   if (def.type === "pipe" && def.in._zod.traits.has("$ZodTransform")) {
@@ -11852,7 +11852,7 @@ function serializeDefaultValue(value, schema, ctx, json, params) {
 }
 var formatMap, stringProcessor, numberProcessor, booleanProcessor, nullProcessor, neverProcessor, unknownProcessor, enumProcessor, literalProcessor, customProcessor, transformProcessor, arrayProcessor, objectProcessor, unionProcessor, intersectionProcessor, pendingRecords, recordProcessor, nullableProcessor, nonoptionalProcessor, UNREPRESENTABLE_DEFAULT, defaultProcessor, prefaultProcessor, catchProcessor, pipeProcessor, readonlyProcessor, optionalProcessor;
 var init_json_schema_processors = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/json-schema-processors.js"() {
+  "node_modules/zod/v4/core/json-schema-processors.js"() {
     init_regexes();
     init_to_json_schema();
     init_util();
@@ -12215,15 +12215,15 @@ var init_json_schema_processors = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/json-schema.js
+// node_modules/zod/v4/core/json-schema.js
 var init_json_schema = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/json-schema.js"() {
+  "node_modules/zod/v4/core/json-schema.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/index.js
+// node_modules/zod/v4/core/index.js
 var init_core2 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/core/index.js"() {
+  "node_modules/zod/v4/core/index.js"() {
     init_core();
     init_parse();
     init_errors();
@@ -12243,40 +12243,40 @@ var init_core2 = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/mini/parse.js
+// node_modules/zod/v4/mini/parse.js
 var init_parse2 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/mini/parse.js"() {
+  "node_modules/zod/v4/mini/parse.js"() {
     init_core2();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/mini/schemas.js
+// node_modules/zod/v4/mini/schemas.js
 var init_schemas2 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/mini/schemas.js"() {
+  "node_modules/zod/v4/mini/schemas.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/mini/checks.js
+// node_modules/zod/v4/mini/checks.js
 var init_checks2 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/mini/checks.js"() {
+  "node_modules/zod/v4/mini/checks.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/mini/iso.js
+// node_modules/zod/v4/mini/iso.js
 var init_iso = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/mini/iso.js"() {
+  "node_modules/zod/v4/mini/iso.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/mini/coerce.js
+// node_modules/zod/v4/mini/coerce.js
 var init_coerce = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/mini/coerce.js"() {
+  "node_modules/zod/v4/mini/coerce.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/mini/external.js
+// node_modules/zod/v4/mini/external.js
 var init_external = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/mini/external.js"() {
+  "node_modules/zod/v4/mini/external.js"() {
     init_core2();
     init_parse2();
     init_schemas2();
@@ -12287,14 +12287,14 @@ var init_external = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4-mini/index.js
+// node_modules/zod/v4-mini/index.js
 var init_v4_mini = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4-mini/index.js"() {
+  "node_modules/zod/v4-mini/index.js"() {
     init_external();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
 function isZ4Schema(s) {
   const schema = s;
   return !!schema._zod;
@@ -12357,19 +12357,19 @@ function getLiteralValue(schema) {
   return void 0;
 }
 var init_zod_compat = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js"() {
     init_v4_mini();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/checks.js
+// node_modules/zod/v4/classic/checks.js
 var init_checks3 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/checks.js"() {
+  "node_modules/zod/v4/classic/checks.js"() {
     init_core2();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/errors.js
+// node_modules/zod/v4/classic/errors.js
 function _lazyMethod(proto, key2, make) {
   Object.defineProperty(proto, key2, {
     configurable: true,
@@ -12386,7 +12386,7 @@ function _lazyMethod(proto, key2, make) {
 }
 var _installedErrorProtos, initializer2, ZodRealError;
 var init_errors2 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/errors.js"() {
+  "node_modules/zod/v4/classic/errors.js"() {
     init_core2();
     init_core2();
     init_util();
@@ -12422,10 +12422,10 @@ var init_errors2 = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/parse.js
+// node_modules/zod/v4/classic/parse.js
 var parse2, parseAsync2, safeParse3, safeParseAsync2, encode2, decode2, encodeAsync2, decodeAsync2, safeEncode2, safeDecode2, safeEncodeAsync2, safeDecodeAsync2;
 var init_parse3 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/parse.js"() {
+  "node_modules/zod/v4/classic/parse.js"() {
     init_core2();
     init_errors2();
     parse2 = /* @__PURE__ */ _parse(ZodRealError);
@@ -12443,7 +12443,7 @@ var init_parse3 = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/schemas.js
+// node_modules/zod/v4/classic/schemas.js
 function _ensureDefaultLocale() {
   if (!globalConfig.localeError)
     config(en_default());
@@ -12633,7 +12633,7 @@ function preprocess(fn, schema) {
 }
 var ZodType, _ZodString, ZodString, ZodStringFormat, ZodISODateTime, ZodISODate, ZodISOTime, ZodISODuration, ZodEmail, ZodGUID, ZodUUID, ZodURL, ZodEmoji, ZodNanoID, ZodCUID, ZodCUID2, ZodULID, ZodXID, ZodKSUID, ZodIPv4, ZodIPv6, ZodCIDRv4, ZodCIDRv6, ZodBase64, ZodBase64URL, ZodE164, ZodJWT, ZodNumber, ZodNumberFormat, ZodBoolean, ZodNull, ZodUnknown, ZodNever, ZodArray, ZodObject, ZodUnion, ZodDiscriminatedUnion, ZodIntersection, ZodRecord, ZodEnum, ZodLiteral, ZodTransform, ZodOptional, ZodExactOptional, ZodNullable, ZodDefault, ZodPrefault, ZodNonOptional, ZodCatch, ZodPipe, ZodPreprocess, ZodReadonly, ZodCustom;
 var init_schemas3 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/schemas.js"() {
+  "node_modules/zod/v4/classic/schemas.js"() {
     init_core2();
     init_core2();
     init_json_schema_processors();
@@ -13376,16 +13376,16 @@ var init_schemas3 = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/compat.js
+// node_modules/zod/v4/classic/compat.js
 var ZodFirstPartyTypeKind;
 var init_compat = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/compat.js"() {
+  "node_modules/zod/v4/classic/compat.js"() {
     /* @__PURE__ */ (function(ZodFirstPartyTypeKind2) {
     })(ZodFirstPartyTypeKind || (ZodFirstPartyTypeKind = {}));
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/iso.js
+// node_modules/zod/v4/classic/iso.js
 var iso_exports2 = {};
 __export(iso_exports2, {
   ZodISODate: () => ZodISODate,
@@ -13410,22 +13410,22 @@ function duration2(params) {
   return _isoDuration(ZodISODuration, params);
 }
 var init_iso2 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/iso.js"() {
+  "node_modules/zod/v4/classic/iso.js"() {
     init_core2();
     init_schemas3();
     init_schemas3();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/coerce.js
+// node_modules/zod/v4/classic/coerce.js
 var init_coerce2 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/coerce.js"() {
+  "node_modules/zod/v4/classic/coerce.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/external.js
+// node_modules/zod/v4/classic/external.js
 var init_external2 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/external.js"() {
+  "node_modules/zod/v4/classic/external.js"() {
     init_core2();
     init_schemas3();
     init_checks3();
@@ -13438,24 +13438,24 @@ var init_external2 = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/index.js
+// node_modules/zod/v4/classic/index.js
 var init_classic = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/classic/index.js"() {
+  "node_modules/zod/v4/classic/index.js"() {
     init_external2();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/index.js
+// node_modules/zod/v4/index.js
 var init_v4 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod/v4/index.js"() {
+  "node_modules/zod/v4/index.js"() {
     init_classic();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
 var LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS, RELATED_TASK_META_KEY, JSONRPC_VERSION, AssertObjectSchema, ProgressTokenSchema, CursorSchema, TaskCreationParamsSchema, TaskMetadataSchema, RelatedTaskMetadataSchema, RequestMetaSchema, BaseRequestParamsSchema, TaskAugmentedRequestParamsSchema, isTaskAugmentedRequestParams, RequestSchema, NotificationsParamsSchema, NotificationSchema, ResultSchema, RequestIdSchema, JSONRPCRequestSchema, isJSONRPCRequest, JSONRPCNotificationSchema, isJSONRPCNotification, JSONRPCResultResponseSchema, isJSONRPCResultResponse, ErrorCode, JSONRPCErrorResponseSchema, isJSONRPCErrorResponse, JSONRPCMessageSchema, JSONRPCResponseSchema, EmptyResultSchema, CancelledNotificationParamsSchema, CancelledNotificationSchema, IconSchema, IconsSchema, BaseMetadataSchema, ImplementationSchema, FormElicitationCapabilitySchema, ElicitationCapabilitySchema, ClientTasksCapabilitySchema, ServerTasksCapabilitySchema, ClientCapabilitiesSchema, InitializeRequestParamsSchema, InitializeRequestSchema, ServerCapabilitiesSchema, InitializeResultSchema, InitializedNotificationSchema, PingRequestSchema, ProgressSchema, ProgressNotificationParamsSchema, ProgressNotificationSchema, PaginatedRequestParamsSchema, PaginatedRequestSchema, PaginatedResultSchema, TaskStatusSchema, TaskSchema, CreateTaskResultSchema, TaskStatusNotificationParamsSchema, TaskStatusNotificationSchema, GetTaskRequestSchema, GetTaskResultSchema, GetTaskPayloadRequestSchema, GetTaskPayloadResultSchema, ListTasksRequestSchema, ListTasksResultSchema, CancelTaskRequestSchema, CancelTaskResultSchema, ResourceContentsSchema, TextResourceContentsSchema, Base64Schema, BlobResourceContentsSchema, RoleSchema, AnnotationsSchema, ResourceSchema, ResourceTemplateSchema, ListResourcesRequestSchema, ListResourcesResultSchema, ListResourceTemplatesRequestSchema, ListResourceTemplatesResultSchema, ResourceRequestParamsSchema, ReadResourceRequestParamsSchema, ReadResourceRequestSchema, ReadResourceResultSchema, ResourceListChangedNotificationSchema, SubscribeRequestParamsSchema, SubscribeRequestSchema, UnsubscribeRequestParamsSchema, UnsubscribeRequestSchema, ResourceUpdatedNotificationParamsSchema, ResourceUpdatedNotificationSchema, PromptArgumentSchema, PromptSchema, ListPromptsRequestSchema, ListPromptsResultSchema, GetPromptRequestParamsSchema, GetPromptRequestSchema, TextContentSchema, ImageContentSchema, AudioContentSchema, ToolUseContentSchema, EmbeddedResourceSchema, ResourceLinkSchema, ContentBlockSchema, PromptMessageSchema, GetPromptResultSchema, PromptListChangedNotificationSchema, ToolAnnotationsSchema, ToolExecutionSchema, ToolSchema, ListToolsRequestSchema, ListToolsResultSchema, CallToolResultSchema, CompatibilityCallToolResultSchema, CallToolRequestParamsSchema, CallToolRequestSchema, ToolListChangedNotificationSchema, ListChangedOptionsBaseSchema, LoggingLevelSchema, SetLevelRequestParamsSchema, SetLevelRequestSchema, LoggingMessageNotificationParamsSchema, LoggingMessageNotificationSchema, ModelHintSchema, ModelPreferencesSchema, ToolChoiceSchema, ToolResultContentSchema, SamplingContentSchema, SamplingMessageContentBlockSchema, SamplingMessageSchema, CreateMessageRequestParamsSchema, CreateMessageRequestSchema, CreateMessageResultSchema, CreateMessageResultWithToolsSchema, BooleanSchemaSchema, StringSchemaSchema, NumberSchemaSchema, UntitledSingleSelectEnumSchemaSchema, TitledSingleSelectEnumSchemaSchema, LegacyTitledEnumSchemaSchema, SingleSelectEnumSchemaSchema, UntitledMultiSelectEnumSchemaSchema, TitledMultiSelectEnumSchemaSchema, MultiSelectEnumSchemaSchema, EnumSchemaSchema, PrimitiveSchemaDefinitionSchema, ElicitRequestFormParamsSchema, ElicitRequestURLParamsSchema, ElicitRequestParamsSchema, ElicitRequestSchema, ElicitationCompleteNotificationParamsSchema, ElicitationCompleteNotificationSchema, ElicitResultSchema, ResourceTemplateReferenceSchema, PromptReferenceSchema, CompleteRequestParamsSchema, CompleteRequestSchema, CompleteResultSchema, RootSchema, ListRootsRequestSchema, ListRootsResultSchema, RootsListChangedNotificationSchema, ClientRequestSchema, ClientNotificationSchema, ClientResultSchema, ServerRequestSchema, ServerNotificationSchema, ServerResultSchema, McpError, UrlElicitationRequiredError;
 var init_types = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/types.js"() {
     init_v4();
     LATEST_PROTOCOL_VERSION = "2025-11-25";
     SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"];
@@ -14976,135 +14976,135 @@ var init_types = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
 function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 var init_interfaces = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/Options.js
+// node_modules/zod-to-json-schema/dist/esm/Options.js
 var init_Options = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/Options.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/Options.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/Refs.js
+// node_modules/zod-to-json-schema/dist/esm/Refs.js
 var init_Refs = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/Refs.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/Refs.js"() {
     init_Options();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/errorMessages.js
+// node_modules/zod-to-json-schema/dist/esm/errorMessages.js
 var init_errorMessages = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/errorMessages.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/errorMessages.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
+// node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
 var init_getRelativePath = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/getRelativePath.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/getRelativePath.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/any.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/any.js
 var init_any = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/any.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/any.js"() {
     init_getRelativePath();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/array.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/array.js
 var init_array = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/array.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/array.js"() {
     init_errorMessages();
     init_parseDef();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js
 var init_bigint = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js"() {
     init_errorMessages();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js
 var init_boolean = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/branded.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/branded.js
 var init_branded = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/branded.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/branded.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/catch.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/catch.js
 var init_catch = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/catch.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/catch.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/date.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/date.js
 var init_date = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/date.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/date.js"() {
     init_errorMessages();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/default.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/default.js
 var init_default = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/default.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/default.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/effects.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/effects.js
 var init_effects = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/effects.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/effects.js"() {
     init_parseDef();
     init_any();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/enum.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/enum.js
 var init_enum = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/enum.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/enum.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js
 var init_intersection = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/literal.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/literal.js
 var init_literal = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/literal.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/literal.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/string.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/string.js
 var ALPHA_NUMERIC;
 var init_string = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/string.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/string.js"() {
     init_errorMessages();
     ALPHA_NUMERIC = new Set("ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvxyz0123456789");
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/record.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/record.js
 var init_record = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/record.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/record.js"() {
     init_parseDef();
     init_string();
     init_branded();
@@ -15112,124 +15112,124 @@ var init_record = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/map.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/map.js
 var init_map = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/map.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/map.js"() {
     init_parseDef();
     init_record();
     init_any();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
 var init_nativeEnum = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/never.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/never.js
 var init_never = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/never.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/never.js"() {
     init_any();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/null.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/null.js
 var init_null = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/null.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/null.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/union.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/union.js
 var init_union = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/union.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/union.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js
 var init_nullable = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js"() {
     init_parseDef();
     init_union();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/number.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/number.js
 var init_number = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/number.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/number.js"() {
     init_errorMessages();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/object.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/object.js
 var init_object = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/object.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/object.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/optional.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/optional.js
 var init_optional = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/optional.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/optional.js"() {
     init_parseDef();
     init_any();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js
 var init_pipeline = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/promise.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/promise.js
 var init_promise = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/promise.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/promise.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/set.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/set.js
 var init_set = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/set.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/set.js"() {
     init_errorMessages();
     init_parseDef();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js
 var init_tuple = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js
 var init_undefined = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js"() {
     init_any();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js
 var init_unknown = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js"() {
     init_any();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js
+// node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js
 var init_readonly = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js"() {
     init_parseDef();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/selectParser.js
+// node_modules/zod-to-json-schema/dist/esm/selectParser.js
 var init_selectParser = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/selectParser.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/selectParser.js"() {
     init_any();
     init_array();
     init_bigint();
@@ -15263,9 +15263,9 @@ var init_selectParser = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parseDef.js
+// node_modules/zod-to-json-schema/dist/esm/parseDef.js
 var init_parseDef = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parseDef.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parseDef.js"() {
     init_Options();
     init_selectParser();
     init_getRelativePath();
@@ -15273,24 +15273,24 @@ var init_parseDef = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parseTypes.js
+// node_modules/zod-to-json-schema/dist/esm/parseTypes.js
 var init_parseTypes = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/parseTypes.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/parseTypes.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
+// node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
 var init_zodToJsonSchema = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js"() {
     init_parseDef();
     init_Refs();
     init_any();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/index.js
+// node_modules/zod-to-json-schema/dist/esm/index.js
 var init_esm = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/zod-to-json-schema/dist/esm/index.js"() {
+  "node_modules/zod-to-json-schema/dist/esm/index.js"() {
     init_Options();
     init_Refs();
     init_errorMessages();
@@ -15333,7 +15333,7 @@ var init_esm = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
 function getMethodLiteral(schema) {
   const shape = getObjectShape(schema);
   const methodSchema = shape?.method;
@@ -15354,13 +15354,13 @@ function parseWithCompat(schema, data) {
   return result.data;
 }
 var init_zod_json_schema_compat = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js"() {
     init_zod_compat();
     init_esm();
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
 function isPlainObject2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -15382,7 +15382,7 @@ function mergeCapabilities(base, additional) {
 }
 var DEFAULT_REQUEST_TIMEOUT_MSEC, Protocol;
 var init_protocol2 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js"() {
     init_zod_compat();
     init_types();
     init_interfaces();
@@ -16323,9 +16323,9 @@ var init_protocol2 = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/codegen/code.js
+// node_modules/ajv/dist/compile/codegen/code.js
 var require_code = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/codegen/code.js"(exports2) {
+  "node_modules/ajv/dist/compile/codegen/code.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.regexpCode = exports2.getEsmExportName = exports2.getProperty = exports2.safeStringify = exports2.stringify = exports2.strConcat = exports2.addCodeArg = exports2.str = exports2._ = exports2.nil = exports2._Code = exports2.Name = exports2.IDENTIFIER = exports2._CodeOrName = void 0;
@@ -16477,9 +16477,9 @@ var require_code = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/codegen/scope.js
+// node_modules/ajv/dist/compile/codegen/scope.js
 var require_scope = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/codegen/scope.js"(exports2) {
+  "node_modules/ajv/dist/compile/codegen/scope.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ValueScope = exports2.ValueScopeName = exports2.Scope = exports2.varKinds = exports2.UsedValueState = void 0;
@@ -16622,9 +16622,9 @@ var require_scope = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/codegen/index.js
+// node_modules/ajv/dist/compile/codegen/index.js
 var require_codegen = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/codegen/index.js"(exports2) {
+  "node_modules/ajv/dist/compile/codegen/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.or = exports2.and = exports2.not = exports2.CodeGen = exports2.operators = exports2.varKinds = exports2.ValueScopeName = exports2.ValueScope = exports2.Scope = exports2.Name = exports2.regexpCode = exports2.stringify = exports2.getProperty = exports2.nil = exports2.strConcat = exports2.str = exports2._ = void 0;
@@ -17342,9 +17342,9 @@ var require_codegen = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/util.js
+// node_modules/ajv/dist/compile/util.js
 var require_util = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/util.js"(exports2) {
+  "node_modules/ajv/dist/compile/util.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.checkStrictMode = exports2.getErrorPath = exports2.Type = exports2.useFunc = exports2.setEvaluated = exports2.evaluatedPropsToName = exports2.mergeEvaluated = exports2.eachItem = exports2.unescapeJsonPointer = exports2.escapeJsonPointer = exports2.escapeFragment = exports2.unescapeFragment = exports2.schemaRefOrVal = exports2.schemaHasRulesButRef = exports2.schemaHasRules = exports2.checkUnknownRules = exports2.alwaysValidSchema = exports2.toHash = void 0;
@@ -17509,9 +17509,9 @@ var require_util = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/names.js
+// node_modules/ajv/dist/compile/names.js
 var require_names = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/names.js"(exports2) {
+  "node_modules/ajv/dist/compile/names.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -17548,9 +17548,9 @@ var require_names = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/errors.js
+// node_modules/ajv/dist/compile/errors.js
 var require_errors = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/errors.js"(exports2) {
+  "node_modules/ajv/dist/compile/errors.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.extendErrors = exports2.resetErrorsCount = exports2.reportExtraError = exports2.reportError = exports2.keyword$DataError = exports2.keywordError = void 0;
@@ -17670,9 +17670,9 @@ var require_errors = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/validate/boolSchema.js
+// node_modules/ajv/dist/compile/validate/boolSchema.js
 var require_boolSchema = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/validate/boolSchema.js"(exports2) {
+  "node_modules/ajv/dist/compile/validate/boolSchema.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.boolOrEmptySchema = exports2.topBoolOrEmptySchema = void 0;
@@ -17721,9 +17721,9 @@ var require_boolSchema = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/rules.js
+// node_modules/ajv/dist/compile/rules.js
 var require_rules = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/rules.js"(exports2) {
+  "node_modules/ajv/dist/compile/rules.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getRules = exports2.isJSONType = void 0;
@@ -17752,9 +17752,9 @@ var require_rules = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/validate/applicability.js
+// node_modules/ajv/dist/compile/validate/applicability.js
 var require_applicability = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/validate/applicability.js"(exports2) {
+  "node_modules/ajv/dist/compile/validate/applicability.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.shouldUseRule = exports2.shouldUseGroup = exports2.schemaHasRulesForType = void 0;
@@ -17775,9 +17775,9 @@ var require_applicability = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/validate/dataType.js
+// node_modules/ajv/dist/compile/validate/dataType.js
 var require_dataType = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/validate/dataType.js"(exports2) {
+  "node_modules/ajv/dist/compile/validate/dataType.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.reportTypeError = exports2.checkDataTypes = exports2.checkDataType = exports2.coerceAndCheckDataType = exports2.getJSONTypes = exports2.getSchemaTypes = exports2.DataType = void 0;
@@ -17959,9 +17959,9 @@ var require_dataType = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/validate/defaults.js
+// node_modules/ajv/dist/compile/validate/defaults.js
 var require_defaults = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/validate/defaults.js"(exports2) {
+  "node_modules/ajv/dist/compile/validate/defaults.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.assignDefaults = void 0;
@@ -17996,9 +17996,9 @@ var require_defaults = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/code.js
+// node_modules/ajv/dist/vocabularies/code.js
 var require_code2 = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/code.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/code.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.validateUnion = exports2.validateArray = exports2.usePattern = exports2.callValidateCode = exports2.schemaProperties = exports2.allSchemaProperties = exports2.noPropertyInData = exports2.propertyInData = exports2.isOwnProperty = exports2.hasPropFunc = exports2.reportMissingProp = exports2.checkMissingProp = exports2.checkReportMissingProp = void 0;
@@ -18129,9 +18129,9 @@ var require_code2 = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/validate/keyword.js
+// node_modules/ajv/dist/compile/validate/keyword.js
 var require_keyword = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/validate/keyword.js"(exports2) {
+  "node_modules/ajv/dist/compile/validate/keyword.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.validateKeywordUsage = exports2.validSchemaType = exports2.funcKeywordCode = exports2.macroKeywordCode = void 0;
@@ -18247,9 +18247,9 @@ var require_keyword = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/validate/subschema.js
+// node_modules/ajv/dist/compile/validate/subschema.js
 var require_subschema = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/validate/subschema.js"(exports2) {
+  "node_modules/ajv/dist/compile/validate/subschema.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.extendSubschemaMode = exports2.extendSubschemaData = exports2.getSubschema = void 0;
@@ -18330,9 +18330,9 @@ var require_subschema = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/fast-deep-equal/index.js
+// node_modules/fast-deep-equal/index.js
 var require_fast_deep_equal = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/fast-deep-equal/index.js"(exports2, module2) {
+  "node_modules/fast-deep-equal/index.js"(exports2, module2) {
     "use strict";
     module2.exports = function equal(a, b2) {
       if (a === b2) return true;
@@ -18365,9 +18365,9 @@ var require_fast_deep_equal = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/json-schema-traverse/index.js
+// node_modules/json-schema-traverse/index.js
 var require_json_schema_traverse = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/json-schema-traverse/index.js"(exports2, module2) {
+  "node_modules/json-schema-traverse/index.js"(exports2, module2) {
     "use strict";
     var traverse = module2.exports = function(schema, opts, cb) {
       if (typeof opts == "function") {
@@ -18453,9 +18453,9 @@ var require_json_schema_traverse = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/resolve.js
+// node_modules/ajv/dist/compile/resolve.js
 var require_resolve = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/resolve.js"(exports2) {
+  "node_modules/ajv/dist/compile/resolve.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getSchemaRefs = exports2.resolveUrl = exports2.normalizeId = exports2._getFullPath = exports2.getFullPath = exports2.inlineRef = void 0;
@@ -18609,9 +18609,9 @@ var require_resolve = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/validate/index.js
+// node_modules/ajv/dist/compile/validate/index.js
 var require_validate = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/validate/index.js"(exports2) {
+  "node_modules/ajv/dist/compile/validate/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getData = exports2.KeywordCxt = exports2.validateFunctionCode = void 0;
@@ -19117,9 +19117,9 @@ var require_validate = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/runtime/validation_error.js
+// node_modules/ajv/dist/runtime/validation_error.js
 var require_validation_error = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/runtime/validation_error.js"(exports2) {
+  "node_modules/ajv/dist/runtime/validation_error.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var ValidationError = class extends Error {
@@ -19133,9 +19133,9 @@ var require_validation_error = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/ref_error.js
+// node_modules/ajv/dist/compile/ref_error.js
 var require_ref_error = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/ref_error.js"(exports2) {
+  "node_modules/ajv/dist/compile/ref_error.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var resolve_1 = require_resolve();
@@ -19150,9 +19150,9 @@ var require_ref_error = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/index.js
+// node_modules/ajv/dist/compile/index.js
 var require_compile = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/compile/index.js"(exports2) {
+  "node_modules/ajv/dist/compile/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.resolveSchema = exports2.getCompilingSchema = exports2.resolveRef = exports2.compileSchema = exports2.SchemaEnv = void 0;
@@ -19374,9 +19374,9 @@ var require_compile = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/refs/data.json
+// node_modules/ajv/dist/refs/data.json
 var require_data = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/refs/data.json"(exports2, module2) {
+  "node_modules/ajv/dist/refs/data.json"(exports2, module2) {
     module2.exports = {
       $id: "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/data.json#",
       description: "Meta-schema for $data reference (JSON AnySchema extension proposal)",
@@ -19393,9 +19393,9 @@ var require_data = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/fast-uri/lib/utils.js
+// node_modules/fast-uri/lib/utils.js
 var require_utils = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/fast-uri/lib/utils.js"(exports2, module2) {
+  "node_modules/fast-uri/lib/utils.js"(exports2, module2) {
     "use strict";
     var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
     var isIPv4 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
@@ -19895,9 +19895,9 @@ var require_utils = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/fast-uri/lib/schemes.js
+// node_modules/fast-uri/lib/schemes.js
 var require_schemes = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/fast-uri/lib/schemes.js"(exports2, module2) {
+  "node_modules/fast-uri/lib/schemes.js"(exports2, module2) {
     "use strict";
     var { isUUID } = require_utils();
     var URN_REG = /^([\da-z][\d\-a-z]{0,31}):((?:[\w!$'()*+,\-./:;=@]|%[\da-f]{2})+)$/iu;
@@ -20106,9 +20106,9 @@ var require_schemes = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/fast-uri/index.js
+// node_modules/fast-uri/index.js
 var require_fast_uri = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/fast-uri/index.js"(exports2, module2) {
+  "node_modules/fast-uri/index.js"(exports2, module2) {
     "use strict";
     var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, serializePathEncoding, normalizeQueryFragmentEncoding, encodeQuery, encodeFragment, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
@@ -20511,9 +20511,9 @@ var require_fast_uri = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/runtime/uri.js
+// node_modules/ajv/dist/runtime/uri.js
 var require_uri = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/runtime/uri.js"(exports2) {
+  "node_modules/ajv/dist/runtime/uri.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var uri = require_fast_uri();
@@ -20522,9 +20522,9 @@ var require_uri = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/core.js
+// node_modules/ajv/dist/core.js
 var require_core = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/core.js"(exports2) {
+  "node_modules/ajv/dist/core.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CodeGen = exports2.Name = exports2.nil = exports2.stringify = exports2.str = exports2._ = exports2.KeywordCxt = void 0;
@@ -21133,9 +21133,9 @@ var require_core = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/core/id.js
+// node_modules/ajv/dist/vocabularies/core/id.js
 var require_id = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/core/id.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/core/id.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var def = {
@@ -21148,9 +21148,9 @@ var require_id = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/core/ref.js
+// node_modules/ajv/dist/vocabularies/core/ref.js
 var require_ref = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/core/ref.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/core/ref.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.callRef = exports2.getValidate = void 0;
@@ -21270,9 +21270,9 @@ var require_ref = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/core/index.js
+// node_modules/ajv/dist/vocabularies/core/index.js
 var require_core2 = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/core/index.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/core/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var id_1 = require_id();
@@ -21291,9 +21291,9 @@ var require_core2 = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/limitNumber.js
+// node_modules/ajv/dist/vocabularies/validation/limitNumber.js
 var require_limitNumber = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -21323,9 +21323,9 @@ var require_limitNumber = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/multipleOf.js
+// node_modules/ajv/dist/vocabularies/validation/multipleOf.js
 var require_multipleOf = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -21351,9 +21351,9 @@ var require_multipleOf = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/runtime/ucs2length.js
+// node_modules/ajv/dist/runtime/ucs2length.js
 var require_ucs2length = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/runtime/ucs2length.js"(exports2) {
+  "node_modules/ajv/dist/runtime/ucs2length.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     function ucs2length(str) {
@@ -21377,9 +21377,9 @@ var require_ucs2length = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/limitLength.js
+// node_modules/ajv/dist/vocabularies/validation/limitLength.js
 var require_limitLength = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -21409,9 +21409,9 @@ var require_limitLength = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/pattern.js
+// node_modules/ajv/dist/vocabularies/validation/pattern.js
 var require_pattern = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -21446,9 +21446,9 @@ var require_pattern = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/limitProperties.js
+// node_modules/ajv/dist/vocabularies/validation/limitProperties.js
 var require_limitProperties = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -21475,9 +21475,9 @@ var require_limitProperties = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/required.js
+// node_modules/ajv/dist/vocabularies/validation/required.js
 var require_required = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/required.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/validation/required.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -21557,9 +21557,9 @@ var require_required = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/limitItems.js
+// node_modules/ajv/dist/vocabularies/validation/limitItems.js
 var require_limitItems = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -21586,9 +21586,9 @@ var require_limitItems = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/runtime/equal.js
+// node_modules/ajv/dist/runtime/equal.js
 var require_equal = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/runtime/equal.js"(exports2) {
+  "node_modules/ajv/dist/runtime/equal.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var equal = require_fast_deep_equal();
@@ -21597,9 +21597,9 @@ var require_equal = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js
+// node_modules/ajv/dist/vocabularies/validation/uniqueItems.js
 var require_uniqueItems = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var dataType_1 = require_dataType();
@@ -21664,9 +21664,9 @@ var require_uniqueItems = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/const.js
+// node_modules/ajv/dist/vocabularies/validation/const.js
 var require_const = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/const.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/validation/const.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -21693,9 +21693,9 @@ var require_const = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/enum.js
+// node_modules/ajv/dist/vocabularies/validation/enum.js
 var require_enum = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/enum.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/validation/enum.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -21742,9 +21742,9 @@ var require_enum = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/index.js
+// node_modules/ajv/dist/vocabularies/validation/index.js
 var require_validation = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/validation/index.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/validation/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var limitNumber_1 = require_limitNumber();
@@ -21780,9 +21780,9 @@ var require_validation = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js
+// node_modules/ajv/dist/vocabularies/applicator/additionalItems.js
 var require_additionalItems = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.validateAdditionalItems = void 0;
@@ -21833,9 +21833,9 @@ var require_additionalItems = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/items.js
+// node_modules/ajv/dist/vocabularies/applicator/items.js
 var require_items = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/items.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/items.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.validateTuple = void 0;
@@ -21890,9 +21890,9 @@ var require_items = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js
+// node_modules/ajv/dist/vocabularies/applicator/prefixItems.js
 var require_prefixItems = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var items_1 = require_items();
@@ -21907,9 +21907,9 @@ var require_prefixItems = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/items2020.js
+// node_modules/ajv/dist/vocabularies/applicator/items2020.js
 var require_items2020 = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -21942,9 +21942,9 @@ var require_items2020 = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/contains.js
+// node_modules/ajv/dist/vocabularies/applicator/contains.js
 var require_contains = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -22036,9 +22036,9 @@ var require_contains = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/dependencies.js
+// node_modules/ajv/dist/vocabularies/applicator/dependencies.js
 var require_dependencies = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.validateSchemaDeps = exports2.validatePropertyDeps = exports2.error = void 0;
@@ -22130,9 +22130,9 @@ var require_dependencies = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js
+// node_modules/ajv/dist/vocabularies/applicator/propertyNames.js
 var require_propertyNames = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -22173,9 +22173,9 @@ var require_propertyNames = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js
+// node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js
 var require_additionalProperties = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -22279,9 +22279,9 @@ var require_additionalProperties = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/properties.js
+// node_modules/ajv/dist/vocabularies/applicator/properties.js
 var require_properties = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var validate_1 = require_validate();
@@ -22337,9 +22337,9 @@ var require_properties = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js
+// node_modules/ajv/dist/vocabularies/applicator/patternProperties.js
 var require_patternProperties = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -22411,9 +22411,9 @@ var require_patternProperties = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/not.js
+// node_modules/ajv/dist/vocabularies/applicator/not.js
 var require_not = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/not.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/not.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var util_1 = require_util();
@@ -22442,9 +22442,9 @@ var require_not = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/anyOf.js
+// node_modules/ajv/dist/vocabularies/applicator/anyOf.js
 var require_anyOf = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -22459,9 +22459,9 @@ var require_anyOf = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/oneOf.js
+// node_modules/ajv/dist/vocabularies/applicator/oneOf.js
 var require_oneOf = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -22517,9 +22517,9 @@ var require_oneOf = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/allOf.js
+// node_modules/ajv/dist/vocabularies/applicator/allOf.js
 var require_allOf = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var util_1 = require_util();
@@ -22544,9 +22544,9 @@ var require_allOf = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/if.js
+// node_modules/ajv/dist/vocabularies/applicator/if.js
 var require_if = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/if.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/if.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -22613,9 +22613,9 @@ var require_if = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/thenElse.js
+// node_modules/ajv/dist/vocabularies/applicator/thenElse.js
 var require_thenElse = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var util_1 = require_util();
@@ -22631,9 +22631,9 @@ var require_thenElse = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/index.js
+// node_modules/ajv/dist/vocabularies/applicator/index.js
 var require_applicator = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/applicator/index.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/applicator/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var additionalItems_1 = require_additionalItems();
@@ -22679,9 +22679,9 @@ var require_applicator = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/format/format.js
+// node_modules/ajv/dist/vocabularies/format/format.js
 var require_format = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/format/format.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/format/format.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -22769,9 +22769,9 @@ var require_format = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/format/index.js
+// node_modules/ajv/dist/vocabularies/format/index.js
 var require_format2 = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/format/index.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/format/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var format_1 = require_format();
@@ -22780,9 +22780,9 @@ var require_format2 = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/metadata.js
+// node_modules/ajv/dist/vocabularies/metadata.js
 var require_metadata = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/metadata.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/metadata.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.contentVocabulary = exports2.metadataVocabulary = void 0;
@@ -22803,9 +22803,9 @@ var require_metadata = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/draft7.js
+// node_modules/ajv/dist/vocabularies/draft7.js
 var require_draft7 = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/draft7.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/draft7.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var core_1 = require_core2();
@@ -22825,9 +22825,9 @@ var require_draft7 = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/discriminator/types.js
+// node_modules/ajv/dist/vocabularies/discriminator/types.js
 var require_types = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DiscrError = void 0;
@@ -22839,9 +22839,9 @@ var require_types = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/discriminator/index.js
+// node_modules/ajv/dist/vocabularies/discriminator/index.js
 var require_discriminator = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports2) {
+  "node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -22944,9 +22944,9 @@ var require_discriminator = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/refs/json-schema-draft-07.json
+// node_modules/ajv/dist/refs/json-schema-draft-07.json
 var require_json_schema_draft_07 = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/refs/json-schema-draft-07.json"(exports2, module2) {
+  "node_modules/ajv/dist/refs/json-schema-draft-07.json"(exports2, module2) {
     module2.exports = {
       $schema: "http://json-schema.org/draft-07/schema#",
       $id: "http://json-schema.org/draft-07/schema#",
@@ -23101,9 +23101,9 @@ var require_json_schema_draft_07 = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/ajv.js
+// node_modules/ajv/dist/ajv.js
 var require_ajv = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv/dist/ajv.js"(exports2, module2) {
+  "node_modules/ajv/dist/ajv.js"(exports2, module2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.MissingRefError = exports2.ValidationError = exports2.CodeGen = exports2.Name = exports2.nil = exports2.stringify = exports2.str = exports2._ = exports2.KeywordCxt = exports2.Ajv = void 0;
@@ -23171,9 +23171,9 @@ var require_ajv = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv-formats/dist/formats.js
+// node_modules/ajv-formats/dist/formats.js
 var require_formats = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv-formats/dist/formats.js"(exports2) {
+  "node_modules/ajv-formats/dist/formats.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.formatNames = exports2.fastFormats = exports2.fullFormats = void 0;
@@ -23374,9 +23374,9 @@ var require_formats = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv-formats/dist/limit.js
+// node_modules/ajv-formats/dist/limit.js
 var require_limit = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv-formats/dist/limit.js"(exports2) {
+  "node_modules/ajv-formats/dist/limit.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.formatLimitDefinition = void 0;
@@ -23446,9 +23446,9 @@ var require_limit = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv-formats/dist/index.js
+// node_modules/ajv-formats/dist/index.js
 var require_dist = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/ajv-formats/dist/index.js"(exports2, module2) {
+  "node_modules/ajv-formats/dist/index.js"(exports2, module2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var formats_1 = require_formats();
@@ -23488,7 +23488,7 @@ var require_dist = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
 function createDefaultAjvInstance() {
   const ajv = new import_ajv.default({
     strict: false,
@@ -23502,7 +23502,7 @@ function createDefaultAjvInstance() {
 }
 var import_ajv, import_ajv_formats, AjvJsonSchemaValidator;
 var init_ajv_provider = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js"() {
     import_ajv = __toESM(require_ajv(), 1);
     import_ajv_formats = __toESM(require_dist(), 1);
     AjvJsonSchemaValidator = class {
@@ -23561,10 +23561,10 @@ var init_ajv_provider = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
 var ExperimentalServerTasks;
 var init_server = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js"() {
     init_types();
     ExperimentalServerTasks = class {
       constructor(_server) {
@@ -23780,7 +23780,7 @@ var init_server = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
 function assertToolsCallTaskCapability(requests, method, entityName) {
   if (!requests) {
     throw new Error(`${entityName} does not support task creation (required for ${method})`);
@@ -23815,14 +23815,14 @@ function assertClientRequestTaskCapability(requests, method, entityName) {
   }
 }
 var init_helpers = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js"() {
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
 var Server;
 var init_server2 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js"() {
     init_protocol2();
     init_types();
     init_ajv_provider();
@@ -24201,7 +24201,7 @@ var init_server2 = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 function deserializeMessage(line) {
   return JSONRPCMessageSchema.parse(JSON.parse(line));
 }
@@ -24210,7 +24210,7 @@ function serializeMessage(message) {
 }
 var STDIO_DEFAULT_MAX_BUFFER_SIZE, ReadBuffer;
 var init_stdio = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js"() {
     init_types();
     STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
     ReadBuffer = class {
@@ -24244,10 +24244,10 @@ var init_stdio = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 var import_node_process, StdioServerTransport;
 var init_stdio2 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js"() {
+  "node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js"() {
     import_node_process = __toESM(require("node:process"), 1);
     init_stdio();
     StdioServerTransport = class {
@@ -25023,7 +25023,7 @@ var init_delivery = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/tslib/tslib.es6.mjs
+// node_modules/tslib/tslib.es6.mjs
 var tslib_es6_exports = {};
 __export(tslib_es6_exports, {
   __addDisposableResource: () => __addDisposableResource,
@@ -25462,7 +25462,7 @@ function __rewriteRelativeImportExtension(path, preserveJsx) {
 }
 var extendStatics, __assign, __createBinding, __setModuleDefault, ownKeys, _SuppressedError, tslib_es6_default;
 var init_tslib_es6 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/tslib/tslib.es6.mjs"() {
+  "node_modules/tslib/tslib.es6.mjs"() {
     extendStatics = function(d, b2) {
       extendStatics = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d2, b3) {
         d2.__proto__ = b3;
@@ -25548,9 +25548,9 @@ var init_tslib_es6 = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/helper.js
+// node_modules/@supabase/functions-js/dist/main/helper.js
 var require_helper = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/helper.js"(exports2) {
+  "node_modules/@supabase/functions-js/dist/main/helper.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.resolveFetch = void 0;
@@ -25564,9 +25564,9 @@ var require_helper = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/types.js
+// node_modules/@supabase/functions-js/dist/main/types.js
 var require_types2 = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/types.js"(exports2) {
+  "node_modules/@supabase/functions-js/dist/main/types.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FunctionRegion = exports2.FunctionsHttpError = exports2.FunctionsRelayError = exports2.FunctionsFetchError = exports2.FunctionsError = void 0;
@@ -25624,9 +25624,9 @@ var require_types2 = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/FunctionsClient.js
+// node_modules/@supabase/functions-js/dist/main/FunctionsClient.js
 var require_FunctionsClient = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/FunctionsClient.js"(exports2) {
+  "node_modules/@supabase/functions-js/dist/main/FunctionsClient.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FunctionsClient = void 0;
@@ -25910,9 +25910,9 @@ var require_FunctionsClient = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/index.js
+// node_modules/@supabase/functions-js/dist/main/index.js
 var require_main = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/functions-js/dist/main/index.js"(exports2) {
+  "node_modules/@supabase/functions-js/dist/main/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FunctionRegion = exports2.FunctionsRelayError = exports2.FunctionsHttpError = exports2.FunctionsFetchError = exports2.FunctionsError = exports2.FunctionsClient = void 0;
@@ -25939,7 +25939,7 @@ var require_main = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/postgrest-js/dist/index.mjs
+// node_modules/@supabase/postgrest-js/dist/index.mjs
 function sleep(ms, signal) {
   return new Promise((resolve7) => {
     if (signal === null || signal === void 0 ? void 0 : signal.aborted) {
@@ -26016,7 +26016,7 @@ function _objectSpread2(e) {
 }
 var DEFAULT_MAX_RETRIES, getRetryDelay, RETRYABLE_STATUS_CODES, RETRYABLE_METHODS, PostgrestError, PostgrestBuilder, PostgrestTransformBuilder, PostgrestReservedCharsRegexp, PostgrestFilterBuilder, PostgrestQueryBuilder, PostgrestClient;
 var init_dist = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/postgrest-js/dist/index.mjs"() {
+  "node_modules/@supabase/postgrest-js/dist/index.mjs"() {
     DEFAULT_MAX_RETRIES = 3;
     getRetryDelay = (attemptIndex) => Math.min(1e3 * 2 ** attemptIndex, 3e4);
     RETRYABLE_STATUS_CODES = [520, 503];
@@ -29722,9 +29722,9 @@ ${cause.stack}`;
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/websocket-factory.js
+// node_modules/@supabase/realtime-js/dist/main/lib/websocket-factory.js
 var require_websocket_factory = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/websocket-factory.js"(exports2) {
+  "node_modules/@supabase/realtime-js/dist/main/lib/websocket-factory.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WebSocketFactory = void 0;
@@ -29833,9 +29833,9 @@ Suggested solution: ${env.workaround}`;
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/version.js
+// node_modules/@supabase/realtime-js/dist/main/lib/version.js
 var require_version = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/version.js"(exports2) {
+  "node_modules/@supabase/realtime-js/dist/main/lib/version.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.version = void 0;
@@ -29843,9 +29843,9 @@ var require_version = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/constants.js
+// node_modules/@supabase/realtime-js/dist/main/lib/constants.js
 var require_constants = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/constants.js"(exports2) {
+  "node_modules/@supabase/realtime-js/dist/main/lib/constants.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CONNECTION_STATE = exports2.TRANSPORTS = exports2.CHANNEL_EVENTS = exports2.CHANNEL_STATES = exports2.SOCKET_STATES = exports2.MAX_PUSH_BUFFER_SIZE = exports2.WS_CLOSE_NORMAL = exports2.DEFAULT_TIMEOUT = exports2.VERSION = exports2.DEFAULT_VSN = exports2.VSN_2_0_0 = exports2.VSN_1_0_0 = exports2.DEFAULT_VERSION = void 0;
@@ -29891,9 +29891,9 @@ var require_constants = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/serializer.js
+// node_modules/@supabase/realtime-js/dist/main/lib/serializer.js
 var require_serializer = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/serializer.js"(exports2) {
+  "node_modules/@supabase/realtime-js/dist/main/lib/serializer.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var Serializer = class {
@@ -30045,9 +30045,9 @@ var require_serializer = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/transformers.js
+// node_modules/@supabase/realtime-js/dist/main/lib/transformers.js
 var require_transformers = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/transformers.js"(exports2) {
+  "node_modules/@supabase/realtime-js/dist/main/lib/transformers.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.httpEndpointURL = exports2.toTimestampString = exports2.toArray = exports2.toJson = exports2.toNumber = exports2.toBoolean = exports2.convertCell = exports2.convertColumn = exports2.convertChangeData = exports2.PostgresTypes = void 0;
@@ -30224,9 +30224,9 @@ var require_transformers = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/phoenix/priv/static/phoenix.cjs.js
+// node_modules/@supabase/phoenix/priv/static/phoenix.cjs.js
 var require_phoenix_cjs = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/phoenix/priv/static/phoenix.cjs.js"(exports2, module2) {
+  "node_modules/@supabase/phoenix/priv/static/phoenix.cjs.js"(exports2, module2) {
     "use strict";
     var __defProp2 = Object.defineProperty;
     var __getOwnPropDesc2 = Object.getOwnPropertyDescriptor;
@@ -32076,9 +32076,9 @@ var require_phoenix_cjs = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/phoenix/presenceAdapter.js
+// node_modules/@supabase/realtime-js/dist/main/phoenix/presenceAdapter.js
 var require_presenceAdapter = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/phoenix/presenceAdapter.js"(exports2) {
+  "node_modules/@supabase/realtime-js/dist/main/phoenix/presenceAdapter.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var phoenix_1 = require_phoenix_cjs();
@@ -32174,9 +32174,9 @@ var require_presenceAdapter = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimePresence.js
+// node_modules/@supabase/realtime-js/dist/main/RealtimePresence.js
 var require_RealtimePresence = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimePresence.js"(exports2) {
+  "node_modules/@supabase/realtime-js/dist/main/RealtimePresence.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.REALTIME_PRESENCE_LISTEN_EVENTS = void 0;
@@ -32218,9 +32218,9 @@ var require_RealtimePresence = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/normalizeChannelError.js
+// node_modules/@supabase/realtime-js/dist/main/lib/normalizeChannelError.js
 var require_normalizeChannelError = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/lib/normalizeChannelError.js"(exports2) {
+  "node_modules/@supabase/realtime-js/dist/main/lib/normalizeChannelError.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.normalizeChannelError = normalizeChannelError;
@@ -32244,9 +32244,9 @@ var require_normalizeChannelError = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/phoenix/channelAdapter.js
+// node_modules/@supabase/realtime-js/dist/main/phoenix/channelAdapter.js
 var require_channelAdapter = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/phoenix/channelAdapter.js"(exports2) {
+  "node_modules/@supabase/realtime-js/dist/main/phoenix/channelAdapter.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var constants_1 = require_constants();
@@ -32351,9 +32351,9 @@ var require_channelAdapter = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimePostgresFilterBuilder.js
+// node_modules/@supabase/realtime-js/dist/main/RealtimePostgresFilterBuilder.js
 var require_RealtimePostgresFilterBuilder = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimePostgresFilterBuilder.js"(exports2) {
+  "node_modules/@supabase/realtime-js/dist/main/RealtimePostgresFilterBuilder.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.postgresChangesFilter = exports2.RealtimePostgresFilterBuilder = void 0;
@@ -32475,9 +32475,9 @@ var require_RealtimePostgresFilterBuilder = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimeChannel.js
+// node_modules/@supabase/realtime-js/dist/main/RealtimeChannel.js
 var require_RealtimeChannel = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimeChannel.js"(exports2) {
+  "node_modules/@supabase/realtime-js/dist/main/RealtimeChannel.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.REALTIME_CHANNEL_STATES = exports2.REALTIME_SUBSCRIBE_STATES = exports2.REALTIME_LISTEN_TYPES = exports2.REALTIME_POSTGRES_CHANGES_LISTEN_EVENT = exports2.postgresChangesFilter = exports2.RealtimePostgresFilterBuilder = void 0;
@@ -33206,9 +33206,9 @@ var require_RealtimeChannel = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/phoenix/socketAdapter.js
+// node_modules/@supabase/realtime-js/dist/main/phoenix/socketAdapter.js
 var require_socketAdapter = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/phoenix/socketAdapter.js"(exports2) {
+  "node_modules/@supabase/realtime-js/dist/main/phoenix/socketAdapter.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var phoenix_1 = require_phoenix_cjs();
@@ -33324,9 +33324,9 @@ var require_socketAdapter = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js
+// node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js
 var require_RealtimeClient = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js"(exports2) {
+  "node_modules/@supabase/realtime-js/dist/main/RealtimeClient.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var tslib_1 = (init_tslib_es6(), __toCommonJS(tslib_es6_exports));
@@ -33978,9 +33978,9 @@ var require_RealtimeClient = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/index.js
+// node_modules/@supabase/realtime-js/dist/main/index.js
 var require_main2 = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/realtime-js/dist/main/index.js"(exports2) {
+  "node_modules/@supabase/realtime-js/dist/main/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WebSocketFactory = exports2.REALTIME_CHANNEL_STATES = exports2.REALTIME_SUBSCRIBE_STATES = exports2.REALTIME_PRESENCE_LISTEN_EVENTS = exports2.REALTIME_POSTGRES_CHANGES_LISTEN_EVENT = exports2.REALTIME_LISTEN_TYPES = exports2.postgresChangesFilter = exports2.RealtimePostgresFilterBuilder = exports2.RealtimeClient = exports2.RealtimeChannel = exports2.RealtimePresence = void 0;
@@ -34017,7 +34017,7 @@ var require_main2 = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/iceberg-js/dist/index.mjs
+// node_modules/iceberg-js/dist/index.mjs
 function buildUrl(baseUrl, path, query) {
   const url = new URL(path, baseUrl);
   if (query) {
@@ -34093,7 +34093,7 @@ function namespaceToPath2(namespace) {
 }
 var IcebergError, NamespaceOperations, TableOperations, IcebergRestCatalog;
 var init_dist2 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/iceberg-js/dist/index.mjs"() {
+  "node_modules/iceberg-js/dist/index.mjs"() {
     IcebergError = class extends Error {
       constructor(message, opts) {
         super(message);
@@ -34555,7 +34555,7 @@ var init_dist2 = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/storage-js/dist/index.mjs
+// node_modules/@supabase/storage-js/dist/index.mjs
 function _typeof2(o) {
   "@babel/helpers - typeof";
   return _typeof2 = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(o$1) {
@@ -34657,7 +34657,7 @@ function createFetchApi(namespace = "storage") {
 }
 var StorageError, StorageApiError, StorageUnknownError, resolveFetch, isPlainObject3, recursiveToCamel, isValidBucketName, encodeStoragePath, _getErrorMessage, handleError, _getRequestParams, defaultApi, get, post, put, head, remove, vectorsApi, BaseApiClient, _Symbol$toStringTag$1, StreamDownloadBuilder, _Symbol$toStringTag, BlobDownloadBuilder, DEFAULT_SEARCH_OPTIONS, DEFAULT_FILE_OPTIONS, StorageFileApi, version2, DEFAULT_HEADERS, StorageBucketApi, StorageAnalyticsClient, VectorIndexApi, VectorDataApi, VectorBucketApi, StorageVectorsClient, VectorBucketScope, VectorIndexScope, StorageClient;
 var init_dist3 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/storage-js/dist/index.mjs"() {
+  "node_modules/@supabase/storage-js/dist/index.mjs"() {
     init_dist2();
     StorageError = class extends Error {
       constructor(message, namespace = "storage", status, statusCode) {
@@ -37351,9 +37351,9 @@ var init_dist3 = __esm({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/version.js
+// node_modules/@supabase/auth-js/dist/main/lib/version.js
 var require_version2 = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/version.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/lib/version.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.version = void 0;
@@ -37361,9 +37361,9 @@ var require_version2 = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/constants.js
+// node_modules/@supabase/auth-js/dist/main/lib/constants.js
 var require_constants2 = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/constants.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/lib/constants.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.JWKS_TTL = exports2.BASE64URL_REGEX = exports2.API_VERSIONS = exports2.API_VERSION_HEADER_NAME = exports2.NETWORK_FAILURE = exports2.DEFAULT_HEADERS = exports2.AUDIENCE = exports2.STORAGE_KEY = exports2.GOTRUE_URL = exports2.REFRESH_FAILURE_COOLDOWN_MS = exports2.EXPIRY_MARGIN_MS = exports2.AUTO_REFRESH_TICK_THRESHOLD = exports2.AUTO_REFRESH_TICK_DURATION_MS = void 0;
@@ -37393,9 +37393,9 @@ var require_constants2 = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/errors.js
+// node_modules/@supabase/auth-js/dist/main/lib/errors.js
 var require_errors2 = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/errors.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/lib/errors.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.AuthInvalidJwtError = exports2.AuthWeakPasswordError = exports2.AuthRefreshDiscardedError = exports2.AuthRetryableFetchError = exports2.AuthPKCECodeVerifierMissingError = exports2.AuthPKCEGrantCodeExchangeError = exports2.AuthImplicitGrantRedirectError = exports2.AuthInvalidCredentialsError = exports2.AuthInvalidTokenResponseError = exports2.AuthSessionMissingError = exports2.CustomAuthError = exports2.AuthUnknownError = exports2.AuthApiError = exports2.AuthError = void 0;
@@ -37551,9 +37551,9 @@ var require_errors2 = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/base64url.js
+// node_modules/@supabase/auth-js/dist/main/lib/base64url.js
 var require_base64url = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/base64url.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/lib/base64url.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.byteToBase64URL = byteToBase64URL;
@@ -37741,9 +37741,9 @@ var require_base64url = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/helpers.js
+// node_modules/@supabase/auth-js/dist/main/lib/helpers.js
 var require_helpers = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/helpers.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/lib/helpers.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.Deferred = exports2.removeItemAsync = exports2.getItemAsync = exports2.setItemAsync = exports2.looksLikeFetchResponse = exports2.resolveFetch = exports2.supportsLocalStorage = exports2.isBrowser = void 0;
@@ -38063,9 +38063,9 @@ var require_helpers = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/fetch.js
+// node_modules/@supabase/auth-js/dist/main/lib/fetch.js
 var require_fetch = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/fetch.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/lib/fetch.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.handleError = handleError2;
@@ -38247,9 +38247,9 @@ var require_fetch = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/types.js
+// node_modules/@supabase/auth-js/dist/main/lib/types.js
 var require_types3 = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/types.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/lib/types.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SIGN_OUT_SCOPES = void 0;
@@ -38257,9 +38257,9 @@ var require_types3 = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/GoTrueAdminApi.js
+// node_modules/@supabase/auth-js/dist/main/GoTrueAdminApi.js
 var require_GoTrueAdminApi = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/GoTrueAdminApi.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/GoTrueAdminApi.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var tslib_1 = (init_tslib_es6(), __toCommonJS(tslib_es6_exports));
@@ -39343,9 +39343,9 @@ var require_GoTrueAdminApi = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/local-storage.js
+// node_modules/@supabase/auth-js/dist/main/lib/local-storage.js
 var require_local_storage = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/local-storage.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/lib/local-storage.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.memoryLocalStorageAdapter = memoryLocalStorageAdapter;
@@ -39365,9 +39365,9 @@ var require_local_storage = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/locks.js
+// node_modules/@supabase/auth-js/dist/main/lib/locks.js
 var require_locks = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/locks.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/lib/locks.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ProcessLockAcquireTimeoutError = exports2.NavigatorLockAcquireTimeoutError = exports2.LockAcquireTimeoutError = exports2.internals = void 0;
@@ -39543,9 +39543,9 @@ var require_locks = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/polyfills.js
+// node_modules/@supabase/auth-js/dist/main/lib/polyfills.js
 var require_polyfills = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/polyfills.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/lib/polyfills.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.polyfillGlobalThis = polyfillGlobalThis;
@@ -39570,9 +39570,9 @@ var require_polyfills = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/web3/ethereum.js
+// node_modules/@supabase/auth-js/dist/main/lib/web3/ethereum.js
 var require_ethereum = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/web3/ethereum.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/lib/web3/ethereum.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getAddress = getAddress;
@@ -39648,9 +39648,9 @@ ${suffix}`;
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/webauthn.errors.js
+// node_modules/@supabase/auth-js/dist/main/lib/webauthn.errors.js
 var require_webauthn_errors = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/webauthn.errors.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/lib/webauthn.errors.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WebAuthnUnknownError = exports2.WebAuthnError = void 0;
@@ -39839,9 +39839,9 @@ var require_webauthn_errors = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/webauthn.js
+// node_modules/@supabase/auth-js/dist/main/lib/webauthn.js
 var require_webauthn = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/lib/webauthn.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/lib/webauthn.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WebAuthnApi = exports2.DEFAULT_REQUEST_OPTIONS = exports2.DEFAULT_CREATION_OPTIONS = exports2.webAuthnAbortService = exports2.WebAuthnAbortService = exports2.identifyAuthenticationError = exports2.identifyRegistrationError = exports2.isWebAuthnError = exports2.WebAuthnError = void 0;
@@ -40398,9 +40398,9 @@ var require_webauthn = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/GoTrueClient.js
+// node_modules/@supabase/auth-js/dist/main/GoTrueClient.js
 var require_GoTrueClient = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/GoTrueClient.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/GoTrueClient.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var tslib_1 = (init_tslib_es6(), __toCommonJS(tslib_es6_exports));
@@ -45538,9 +45538,9 @@ var require_GoTrueClient = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/AuthAdminApi.js
+// node_modules/@supabase/auth-js/dist/main/AuthAdminApi.js
 var require_AuthAdminApi = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/AuthAdminApi.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/AuthAdminApi.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var tslib_1 = (init_tslib_es6(), __toCommonJS(tslib_es6_exports));
@@ -45550,9 +45550,9 @@ var require_AuthAdminApi = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/AuthClient.js
+// node_modules/@supabase/auth-js/dist/main/AuthClient.js
 var require_AuthClient = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/AuthClient.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/AuthClient.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     var tslib_1 = (init_tslib_es6(), __toCommonJS(tslib_es6_exports));
@@ -45562,9 +45562,9 @@ var require_AuthClient = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/index.js
+// node_modules/@supabase/auth-js/dist/main/index.js
 var require_main3 = __commonJS({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/auth-js/dist/main/index.js"(exports2) {
+  "node_modules/@supabase/auth-js/dist/main/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.processLock = exports2.lockInternals = exports2.NavigatorLockAcquireTimeoutError = exports2.navigatorLock = exports2.AuthClient = exports2.AuthAdminApi = exports2.GoTrueClient = exports2.GoTrueAdminApi = void 0;
@@ -45595,7 +45595,7 @@ var require_main3 = __commonJS({
   }
 });
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/supabase-js/dist/index.mjs
+// node_modules/@supabase/supabase-js/dist/index.mjs
 var dist_exports = {};
 __export(dist_exports, {
   FunctionRegion: () => import_functions_js.FunctionRegion,
@@ -45834,7 +45834,7 @@ function shouldShowDeprecationWarning() {
 }
 var import_functions_js, import_realtime_js, import_auth_js, version3, JS_ENV, JS_RUNTIME_VERSION, _Deno$version, _process$version, _runtimeMeta, DEFAULT_HEADERS2, DEFAULT_GLOBAL_OPTIONS, DEFAULT_DB_OPTIONS, DEFAULT_AUTH_OPTIONS, DEFAULT_REALTIME_OPTIONS, DEFAULT_TRACE_PROPAGATION_OPTIONS, otelModulePromise, OTEL_PKG, resolveFetch2, resolveHeadersConstructor, isNewApiKey, TEMP_KEY_PREFIX, warnedKeySubtypes, checkApiKeyFormat, fetchWithAuth, SupabaseAuthClient, SupabaseClient, createClient;
 var init_dist4 = __esm({
-  "../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/@supabase/supabase-js/dist/index.mjs"() {
+  "node_modules/@supabase/supabase-js/dist/index.mjs"() {
     import_functions_js = __toESM(require_main(), 1);
     init_dist();
     import_realtime_js = __toESM(require_main2(), 1);
@@ -52093,11 +52093,11 @@ async function resolveCloudTarget(options) {
 // src/cloud/seed.ts
 var import_node_crypto15 = require("node:crypto");
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/index.js
+// node_modules/postgres/src/index.js
 var import_os = __toESM(require("os"), 1);
 var import_fs = __toESM(require("fs"), 1);
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/query.js
+// node_modules/postgres/src/query.js
 var originCache = /* @__PURE__ */ new Map();
 var originStackCache = /* @__PURE__ */ new Map();
 var originError = /* @__PURE__ */ Symbol("OriginError");
@@ -52234,7 +52234,7 @@ function cachedError(xs) {
   return originCache.get(xs);
 }
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/errors.js
+// node_modules/postgres/src/errors.js
 var PostgresError = class extends Error {
   constructor(x) {
     super(x.message);
@@ -52284,7 +52284,7 @@ function notSupported(x) {
   return error2;
 }
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/types.js
+// node_modules/postgres/src/types.js
 var types = {
   string: {
     to: 25,
@@ -52570,14 +52570,14 @@ fromKebab.column = { to: fromKebab };
 var kebab = { ...toKebab };
 kebab.column.to = fromKebab;
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/connection.js
+// node_modules/postgres/src/connection.js
 var import_net = __toESM(require("net"), 1);
 var import_tls = __toESM(require("tls"), 1);
 var import_crypto = __toESM(require("crypto"), 1);
 var import_stream = __toESM(require("stream"), 1);
 var import_perf_hooks = require("perf_hooks");
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/result.js
+// node_modules/postgres/src/result.js
 var Result = class extends Array {
   constructor() {
     super();
@@ -52594,7 +52594,7 @@ var Result = class extends Array {
   }
 };
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/queue.js
+// node_modules/postgres/src/queue.js
 var queue_default = Queue;
 function Queue(initial = []) {
   let xs = initial.slice();
@@ -52621,7 +52621,7 @@ function Queue(initial = []) {
   };
 }
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/bytes.js
+// node_modules/postgres/src/bytes.js
 var size = 256;
 var buffer = Buffer.allocUnsafe(size);
 var messages = "BCcDdEFfHPpQSX".split("").reduce((acc, x) => {
@@ -52694,7 +52694,7 @@ function reset() {
   return b;
 }
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/connection.js
+// node_modules/postgres/src/connection.js
 var connection_default = Connection;
 var uid = 1;
 var Sync = bytes_default().S().end();
@@ -53534,7 +53534,7 @@ function timer(fn, seconds) {
   }
 }
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/subscribe.js
+// node_modules/postgres/src/subscribe.js
 var noop2 = () => {
 };
 function Subscribe(postgres2, options) {
@@ -53746,7 +53746,7 @@ function parseEvent(x) {
   return (command2 || "*") + (path ? ":" + (path.indexOf(".") === -1 ? "public." + path : path) : "") + (key2 ? "=" + key2 : "");
 }
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/large.js
+// node_modules/postgres/src/large.js
 var import_stream2 = __toESM(require("stream"), 1);
 function largeObject(sql, oid, mode3 = 131072 | 262144) {
   return new Promise(async (resolve7, reject) => {
@@ -53812,7 +53812,7 @@ function largeObject(sql, oid, mode3 = 131072 | 262144) {
   });
 }
 
-// ../../../../../../../Users/yulanbot/Developer/Ridge.io/cloud-swarm/node_modules/postgres/src/index.js
+// node_modules/postgres/src/index.js
 Object.assign(Postgres, {
   PostgresError,
   toPascal,
@@ -63325,8 +63325,8 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
 ]);
 var UUID_RE25 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.67".length > 0) {
-    return "0.1.67";
+  if ("0.1.68".length > 0) {
+    return "0.1.68";
   }
   try {
     const value = JSON.parse(
