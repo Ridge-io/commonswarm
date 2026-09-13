@@ -658,7 +658,8 @@ test("refusal at parse time: missing or unreadable file gives typed error naming
       "--agent-token-stdin",
     ], AGENT_TOKEN);
     assert.equal(resMissing.code, 1);
-    assert.match(resMissing.stderr, /body_file_missing/);
+    assert.match(resMissing.stderr, /^cswarm: \[body_file_missing\]/);
+    assert.doesNotMatch(resMissing.stderr, /\[body_file_unreadable\]/);
     assert.match(resMissing.stderr, new RegExp(nonExistentPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.equal(networkCalls, 0);
 
@@ -676,7 +677,9 @@ test("refusal at parse time: missing or unreadable file gives typed error naming
       "--agent-token-stdin",
     ], AGENT_TOKEN);
     assert.equal(resUnreadable.code, 1);
-    assert.match(resUnreadable.stderr, /body_file_unreadable/);
+    assert.match(resUnreadable.stderr, /^cswarm: \[body_file_unreadable\]/);
+    assert.doesNotMatch(resUnreadable.stderr, /\[body_file_missing\]/);
+    assert.equal((resUnreadable.stderr.match(/could not read --body-file/g) || []).length, 1, "must not double wrap error message");
     assert.match(resUnreadable.stderr, new RegExp(dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.equal(networkCalls, 0);
   } finally {

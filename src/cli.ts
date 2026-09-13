@@ -1332,9 +1332,9 @@ export async function resolveSignalBody(
       });
     } catch (error) {
       if (
-        error instanceof BodyEncodingError ||
-        error instanceof BodyLengthError ||
-        error instanceof BodyEmptyError
+        error instanceof BodyEncodingError || error instanceof BodyLengthError ||
+        error instanceof BodyEmptyError || error instanceof BodyFileError ||
+        error instanceof BodyStdinError
       ) {
         throw error;
       }
