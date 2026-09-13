@@ -26,7 +26,7 @@ export const ONBOARDING_BOOLEAN_FLAGS = ["check-version", "hook", "full", "previ
 
 export function onboardingUsage(): string {
   return `  cswarm setup --connection-file <private-file> [--profile <absolute-path>] [--host-session-id <id>] [--json]
-  cswarm setup --check-version
+  cswarm setup --check-version [--json]
   cswarm setup guide
   cswarm check --profile <absolute-path> [--host-session-id <id>] [--force] [--full | --message-id <uuid>] [--json]
   cswarm receive configure --profile <absolute-path> --mode ${RECEIVE_MODES.join("|")} [--provider ${RECEIVE_PROVIDERS.join("|")}] [--host-session-id <id>] [--cwd <path>] [--preview-channel] [--json]
@@ -108,7 +108,7 @@ export async function runOnboardingCommand(args: OnboardingArguments): Promise<b
   const verb = args.positionals[0];
   if (verb === "setup") {
     if (args.has("check-version")) {
-      args.assertShape(["check-version"], 1);
+      args.assertShape(["check-version", "json"], 1);
       await output({ setup_version: AGENT_CONNECTION_VERSION });
     } else if (args.positionals[1] === "guide") {
       args.assertShape([], 2);

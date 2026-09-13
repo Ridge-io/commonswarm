@@ -7,8 +7,11 @@ import { test } from "node:test";
 import {
   AGENT_CREDENTIAL_OPTIONAL_FIELDS,
   AGENT_CREDENTIAL_REQUIRED_FIELDS,
+  AgentCredentialInputError,
   parseAgentCredentialInput,
 } from "../../src/cloud/agent-credential-input.js";
+import { AGENT_CONNECTION_VERSION } from "../../src/cloud/agent-onboarding-contract.js";
+import { parseAgentConnection } from "../../src/cloud/agent-profile.js";
 
 /* Reached by `npm run test:p1-cli` through its tests/p1-cli glob. */
 
@@ -198,3 +201,70 @@ test("full synthetic minted shape passes the credential parser", () => {
   assert.equal(parsed.expiresAt, Date.parse("2099-09-02T22:00:00.000Z"));
   assert.equal(parsed.durable, true);
 });
+
+test("positive control: parseAgentCredentialInput with stdin source reports stdin in remedy", () => {
+  // What a wrong implementation would have to do to still pass:
+  // It would have to either hardcode "agent credential input from stdin" and "send that line to stdin"
+  // specifically for this test case, or ignore source and always default to stdin everywhere
+  // (which would then fail file-source tests).
+  assert.throws(
+    () => parseAgentCredentialInput(
+      JSON.stringify({ principal_id: PRINCIPAL }),
+      { kind: "stdin" },
+    ),
+    (err: unknown) => {
+      // D-053: assert exact typed error and code
+      assert.ok(err instanceof AgentCredentialInputError, `expected AgentCredentialInputError but got ${err}`);
+      assert.equal(err.code, "agent_credential_missing_agent_token");
+      assert.ok(err.message.includes("agent credential input from stdin"), `message should state stdin source, got: ${err.message}`);
+      assert.ok(
+        err.message.includes("Next step: copy the minted JSON line again and send that line to stdin."),
+        `message should include stdin next step, got: ${err.message}`,
+      );
+      assert.ok(!err.message.includes("agent credential file"), `message must not mention file, got: ${err.message}`);
+      return true;
+    },
+  );
+});
+
+test("parseAgentConnection with file source propagates file remedy in credential error", () => {
+  // What a wrong implementation would have to do to still pass:
+  // A wrong implementation would have to accept a file source in parseAgentConnection, but
+  // still pass { kind: "stdin" } to parseAgentCredentialInput, while somehow intercepting
+  // or rewriting the error message to mention the file path and remove stdin references.
+  const filePath = "/private/secrets/connection.json";
+  const envelopeWithMissingToken = {
+    version: AGENT_CONNECTION_VERSION,
+    url: "https://fixture.example",
+    anon_key: "public-key",
+    workspace_id: WORKSPACE,
+    principal_id: PRINCIPAL,
+    credential: {
+      message: MESSAGE,
+      status: "accepted",
+      principal_id: PRINCIPAL,
+      token_id: TOKEN_ID,
+      run_id: RUN_ID,
+    },
+  };
+  assert.throws(
+    () => parseAgentConnection(JSON.stringify(envelopeWithMissingToken), { kind: "file", path: filePath }),
+    (err: unknown) => {
+      // D-053: assert typed error and code, never branch on error.message
+      assert.ok(err instanceof AgentCredentialInputError, `expected AgentCredentialInputError but got ${err}`);
+      assert.equal(err.code, "agent_credential_missing_agent_token");
+      assert.ok(
+        err.message.includes(`agent credential file ${filePath}`),
+        `error message must include file path: ${err.message}`,
+      );
+      assert.ok(
+        err.message.includes(`Next step: copy the minted JSON line again and replace ${filePath}.`),
+        `error message must include replacement remedy: ${err.message}`,
+      );
+      assert.ok(!err.message.includes("stdin"), `error message must not mention stdin: ${err.message}`);
+      assert.ok(!err.message.includes("send that line to stdin"), `error message must not mention send to stdin: ${err.message}`);
+      return true;
+    },
+  );
+});
+

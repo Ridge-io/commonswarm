@@ -5,8 +5,8 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, test } from "node:test";
-import { AGENT_CREDENTIAL_MESSAGE_D088 } from "../../src/cloud/agent-credential-input.js";
-import { AGENT_CONNECTION_VERSION } from "../../src/cloud/agent-onboarding-contract.js";
+import { AGENT_CREDENTIAL_MESSAGE_D088, AgentCredentialInputError, parseAgentCredentialInput } from "../../src/cloud/agent-credential-input.js";
+import { AGENT_CONNECTION_VERSION, type AgentConnectionEnvelope } from "../../src/cloud/agent-onboarding-contract.js";
 import { AgentSetupError, parseAgentConnection, readAgentProfile } from "../../src/cloud/agent-profile.js";
 import { setupAgent } from "../../src/cloud/agent-setup.js";
 import { cachedAgentMessage, checkAgentMessages, renderAgentCheck, withAgentDeadline } from "../../src/cloud/agent-check.js";
@@ -372,3 +372,170 @@ test("damaged handoffs fail before authentication and keep CLI errors secret-fre
   assert.equal(version.code, 0);
   assert.deepEqual(JSON.parse(version.stdout), { setup_version: 1 });
 });
+
+test("setup --check-version --json returns exit code 0 and the exact same object as the bare form", async () => {
+  // What a wrong implementation would have to do to still pass:
+  // A wrong implementation would have to either:
+  // 1. Omit "json" from args.assertShape(["check-version"], 1), which would fail with a shape validation
+  //    error and exit code 1 whenever --json is passed.
+  // 2. Accept --json but mutate the output structure (such as wrapping it in an { ok: true, ... } envelope
+  //    or serializing extra fields) so it no longer deep-equals the exact bare form { setup_version: 1 }.
+  const bare = await cli(["setup", "--check-version"]);
+  assert.equal(bare.code, 0);
+  const bareParsed = JSON.parse(bare.stdout);
+  assert.deepEqual(bareParsed, { setup_version: 1 });
+
+  const withJson = await cli(["setup", "--check-version", "--json"]);
+  assert.equal(withJson.code, 0);
+  const jsonParsed = JSON.parse(withJson.stdout);
+  assert.deepEqual(jsonParsed, { setup_version: 1 });
+  assert.deepEqual(jsonParsed, bareParsed);
+});
+
+test("setup with --connection-file names the file in credential remedy when credential is invalid", async () => {
+  // What a wrong implementation would have to do to still pass:
+  // A wrong implementation would have to hardcode { kind: "stdin" } inside parseAgentConnection or
+  // decodeAgentConnectionToken / validateAgentConnectionEnvelope, but intercept and rewrite the error message
+  // text specifically to mention the file path and remove stdin. Or it would have to branch on error.message
+  // rather than throwing the typed AgentCredentialInputError with code "agent_credential_missing_agent_token"
+  // (violating D-053).
+  const badArtifact = { ...artifact() };
+  delete (badArtifact as Record<string, unknown>).agent_token;
+  const badConnection = { ...connection(), credential: badArtifact };
+
+  // 1. Raw JSON connection file
+  const input = await saveInput(badConnection);
+
+  // Assert exact error code: err instanceof AgentCredentialInputError with code agent_credential_missing_agent_token (D-053)
+  await assert.rejects(
+    setupAgent({ connectionFile: input, fetcher: fixture().fetcher }),
+    (err: unknown) => {
+      assert.ok(err instanceof AgentCredentialInputError, `expected AgentCredentialInputError but got ${err}`);
+      assert.equal(err.code, "agent_credential_missing_agent_token");
+      assert.ok(
+        err.message.includes(`agent credential file ${input}`),
+        `error message must contain 'agent credential file ${input}', got: ${err.message}`,
+      );
+      assert.ok(
+        err.message.includes(`Next step: copy the minted JSON line again and replace ${input}.`),
+        `error message must contain file replacement next step, got: ${err.message}`,
+      );
+      assert.ok(!err.message.includes("stdin"), `error message must not contain 'stdin', got: ${err.message}`);
+      assert.ok(
+        !err.message.includes("send that line to stdin"),
+        `error message must not contain 'send that line to stdin', got: ${err.message}`,
+      );
+      return true;
+    },
+  );
+
+  // Run CLI: setup --connection-file <input>
+  const cliRun = await cli(["setup", "--connection-file", input]);
+  assert.equal(cliRun.code, 1);
+  assert.ok(
+    cliRun.stderr.includes(`agent credential file ${input}`),
+    `CLI stderr must contain 'agent credential file ${input}': ${cliRun.stderr}`,
+  );
+  assert.ok(
+    cliRun.stderr.includes(`Next step: copy the minted JSON line again and replace ${input}.`),
+    `CLI stderr must contain replacement next step: ${cliRun.stderr}`,
+  );
+  assert.ok(!cliRun.stderr.includes("stdin"), `CLI stderr must not contain 'stdin': ${cliRun.stderr}`);
+  assert.ok(
+    !cliRun.stderr.includes("send that line to stdin"),
+    `CLI stderr must not contain 'send that line to stdin': ${cliRun.stderr}`,
+  );
+
+  // Run CLI with --json: setup --connection-file <input> --json
+  const cliJsonRun = await cli(["setup", "--connection-file", input, "--json"]);
+  assert.equal(cliJsonRun.code, 1);
+  const parsedJson = JSON.parse(cliJsonRun.stdout);
+  assert.equal(parsedJson.ok, false);
+  assert.ok(
+    parsedJson.error.message.includes(`agent credential file ${input}`),
+    `JSON error message must contain 'agent credential file ${input}': ${parsedJson.error.message}`,
+  );
+  assert.ok(
+    parsedJson.error.message.includes(`Next step: copy the minted JSON line again and replace ${input}.`),
+    `JSON error message must contain replacement next step: ${parsedJson.error.message}`,
+  );
+  assert.ok(
+    !parsedJson.error.message.includes("stdin"),
+    `JSON error message must not contain 'stdin': ${parsedJson.error.message}`,
+  );
+  assert.ok(
+    !parsedJson.error.message.includes("send that line to stdin"),
+    `JSON error message must not contain 'send that line to stdin': ${parsedJson.error.message}`,
+  );
+
+  // 2. Token connection file carrying invalid credential
+  const { encodeAgentConnectionToken } = await import("../../src/cloud/agent-connection-token.js");
+  const badToken = encodeAgentConnectionToken(badConnection as unknown as AgentConnectionEnvelope);
+  const tokenInput = await saveInput();
+  await writeFile(tokenInput, badToken);
+
+  await assert.rejects(
+    setupAgent({ connectionFile: tokenInput, fetcher: fixture().fetcher }),
+    (err: unknown) => {
+      assert.ok(err instanceof AgentCredentialInputError, `expected AgentCredentialInputError but got ${err}`);
+      assert.equal(err.code, "agent_credential_missing_agent_token");
+      assert.ok(
+        err.message.includes(`agent credential file ${tokenInput}`),
+        `token error message must contain 'agent credential file ${tokenInput}', got: ${err.message}`,
+      );
+      assert.ok(
+        err.message.includes(`Next step: copy the minted JSON line again and replace ${tokenInput}.`),
+        `token error message must contain replacement next step, got: ${err.message}`,
+      );
+      assert.ok(!err.message.includes("stdin"), `token error message must not contain 'stdin', got: ${err.message}`);
+      assert.ok(
+        !err.message.includes("send that line to stdin"),
+        `token error message must not contain 'send that line to stdin', got: ${err.message}`,
+      );
+      return true;
+    },
+  );
+
+  const tokenCliRun = await cli(["setup", "--connection-file", tokenInput]);
+  assert.equal(tokenCliRun.code, 1);
+  assert.ok(
+    tokenCliRun.stderr.includes(`agent credential file ${tokenInput}`),
+    `token CLI stderr must contain 'agent credential file ${tokenInput}': ${tokenCliRun.stderr}`,
+  );
+  assert.ok(
+    tokenCliRun.stderr.includes(`Next step: copy the minted JSON line again and replace ${tokenInput}.`),
+    `token CLI stderr must contain replacement next step: ${tokenCliRun.stderr}`,
+  );
+  assert.ok(!tokenCliRun.stderr.includes("stdin"), `token CLI stderr must not contain 'stdin': ${tokenCliRun.stderr}`);
+  assert.ok(
+    !tokenCliRun.stderr.includes("send that line to stdin"),
+    `token CLI stderr must not contain 'send that line to stdin': ${tokenCliRun.stderr}`,
+  );
+});
+
+test("positive control: parseAgentCredentialInput with stdin source reports stdin and send that line to stdin", () => {
+  // What a wrong implementation would have to do to still pass:
+  // A wrong implementation would have to either unconditionally use the file remedy everywhere regardless of source,
+  // or invert the source condition, causing stdin-sourced inputs to fail to report stdin instructions.
+  assert.throws(
+    () => parseAgentCredentialInput(
+      JSON.stringify({ principal_id: AGENT }),
+      { kind: "stdin" },
+    ),
+    (err: unknown) => {
+      assert.ok(err instanceof AgentCredentialInputError, `expected AgentCredentialInputError but got ${err}`);
+      assert.equal(err.code, "agent_credential_missing_agent_token");
+      assert.ok(
+        err.message.includes("agent credential input from stdin"),
+        `message should contain 'agent credential input from stdin', got: ${err.message}`,
+      );
+      assert.ok(
+        err.message.includes("Next step: copy the minted JSON line again and send that line to stdin."),
+        `message should contain 'send that line to stdin', got: ${err.message}`,
+      );
+      assert.ok(!err.message.includes("agent credential file"), `message must not mention file, got: ${err.message}`);
+      return true;
+    },
+  );
+});
+

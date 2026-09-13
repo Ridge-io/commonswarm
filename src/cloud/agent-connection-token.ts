@@ -1,4 +1,4 @@
-import { parseAgentCredentialInput } from "./agent-credential-input.js";
+import { parseAgentCredentialInput, type AgentCredentialInputSource } from "./agent-credential-input.js";
 import {
   AGENT_CONNECTION_FIELDS,
   AGENT_CONNECTION_VERSION,
@@ -52,6 +52,7 @@ function checkedTarget(url: string, anonKey: string): CloudTarget {
 
 export function validateAgentConnectionEnvelope(
   value: unknown,
+  source: AgentCredentialInputSource = { kind: "stdin" },
 ): AgentConnectionEnvelope {
   if (
     !value ||
@@ -83,9 +84,7 @@ export function validateAgentConnectionEnvelope(
     );
   }
   const target = checkedTarget(obj.url as string, obj.anon_key as string);
-  const agent = parseAgentCredentialInput(JSON.stringify(obj.credential), {
-    kind: "stdin",
-  });
+  const agent = parseAgentCredentialInput(JSON.stringify(obj.credential), source);
   if (
     !agent.durable ||
     agent.principalId !== (obj.principal_id as string).toLowerCase()
@@ -105,7 +104,10 @@ export function validateAgentConnectionEnvelope(
   };
 }
 
-export function decodeAgentConnectionToken(raw: string): AgentConnectionEnvelope {
+export function decodeAgentConnectionToken(
+  raw: string,
+  source: AgentCredentialInputSource = { kind: "stdin" },
+): AgentConnectionEnvelope {
   if (typeof raw !== "string") {
     throw new AgentSetupError(
       "token_marker_missing",
@@ -255,5 +257,5 @@ export function decodeAgentConnectionToken(raw: string): AgentConnectionEnvelope
       `The connection token payload is damaged. ${REPAIR_USE_SETUP_FILE}`,
     );
   }
-  return validateAgentConnectionEnvelope(parsed);
+  return validateAgentConnectionEnvelope(parsed, source);
 }

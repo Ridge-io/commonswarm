@@ -3,7 +3,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { cloudTarget, type CloudTarget } from "./config.js";
-import { parseAgentCredentialInput, type AgentCredentialInput } from "./agent-credential-input.js";
+import { parseAgentCredentialInput, type AgentCredentialInput, type AgentCredentialInputSource } from "./agent-credential-input.js";
 import { agentCredentialStore, credentialLineageKey } from "./agent-credential.js";
 import { AgentCredentialSession } from "./renewal.js";
 import { assertLocalSessionBinding, defaultSessionContextPath, listSessionContexts, sessionProofOf } from "./session-context.js";
@@ -75,9 +75,12 @@ export async function assertPrivateLocation(path: string): Promise<string> {
 
 export { isAgentConnectionToken, decodeAgentConnectionToken, encodeAgentConnectionToken };
 
-export function parseAgentConnection(raw: string): AgentConnectionEnvelope {
+export function parseAgentConnection(
+  raw: string,
+  source: AgentCredentialInputSource = { kind: "stdin" },
+): AgentConnectionEnvelope {
   if (isAgentConnectionToken(raw)) {
-    return decodeAgentConnectionToken(raw);
+    return decodeAgentConnectionToken(raw, source);
   }
   let value: Record<string, unknown>;
   try { value = JSON.parse(raw); } catch {
@@ -99,7 +102,7 @@ export function parseAgentConnection(raw: string): AgentConnectionEnvelope {
     throw new AgentSetupError("connection_target_invalid", "The connection URL appears to be a Markdown link. Use ‘Use a setup file’ in CommonSwarm and run setup with that file. Do not edit credentials or paste them into chat.");
   }
   const target = checkedTarget(value.url, value.anon_key);
-  const agent = parseAgentCredentialInput(JSON.stringify(value.credential), { kind: "stdin" });
+  const agent = parseAgentCredentialInput(JSON.stringify(value.credential), source);
   if (!agent.durable || agent.principalId !== value.principal_id.toLowerCase()) {
     throw new AgentSetupError("connection_identity_mismatch", "The connection and credential name different agents. Ask for a new connection file.");
   }
