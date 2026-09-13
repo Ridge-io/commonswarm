@@ -39,7 +39,8 @@
  *   AGENT_TOKEN_DEFAULT_TTL_MS in src/protocol/workspace-commands.ts, while the
  *   connect page's picker defaults to 30 days. The prose states the MAXIMUM only.)
  *   file version <= 25 MB                   -> FILE_MAX_VERSION_BYTES,
- *   workspace file bytes <= 1 GB,              supabase/functions/command/file-artifacts.ts:52-55
+ *   workspace file bytes <= 1 GB,              FILE_WORKSPACE_MAX_BYTES,
+ *                                              supabase/functions/command/file-artifacts.ts:52-55
  *   500 unpurged names / workspace,          -> FILE_WORKSPACE_MAX_NAMES,
  *   20 live+in-flight / file name, but a         FILE_MAX_VERSIONS_PER_NAME, :55
  *   brain topic caps only in-flight             (src/protocol/brain-version-window.ts)

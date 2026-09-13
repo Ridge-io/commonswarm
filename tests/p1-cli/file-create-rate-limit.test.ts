@@ -221,3 +221,151 @@ test("FileCommandRefused carries machine-readable scope, limit and resets_at", (
   assert.match(client, /readonly\s+resets_at:\s*string\s*\|\s*null/);
   assert.match(client, /new\s+FileCommandRefused\([\s\S]*?scope,[\s\S]*?limit,[\s\S]*?resets_at\)/);
 });
+
+/* Item C structural citation gates: cross-file pointers must cite the symbol, and the cited
+ * file:line must resolve to that symbol so an edit breaks the gate loudly instead of rotting. */
+
+test("SWARM-CLOUD.md §2.8 points at the active lines for fileContentAllowed and FILE_NAME_RE", () => {
+  const doc = read("docs/design/SWARM-CLOUD.md");
+  const edge = read("supabase/functions/command/file-artifacts.ts").split("\n");
+
+  const typeCited = /fileContentAllowed[`,\s]+(?:`?supabase\/functions\/command\/)?file-artifacts\.ts:(\d+)/.exec(doc)?.[1];
+  assert.ok(typeCited, "SWARM-CLOUD.md §2.8 no longer cites a line for fileContentAllowed");
+  const typeLine = Number(typeCited);
+  assert.ok(
+    typeLine > 0 && typeLine <= edge.length,
+    `SWARM-CLOUD.md cites line :${typeLine} for fileContentAllowed, but file has ${edge.length} lines`,
+  );
+  assert.ok(
+    edge[typeLine - 1].includes("fileContentAllowed"),
+    `SWARM-CLOUD.md cites file-artifacts.ts:${typeLine} for fileContentAllowed, but line is: ${JSON.stringify(edge[typeLine - 1])}`,
+  );
+
+  const nameCited = /FILE_NAME_RE.*?supabase\/functions\/command\/file-artifacts\.ts:(\d+)/.exec(doc)?.[1];
+  assert.ok(nameCited, "SWARM-CLOUD.md §2.8 no longer cites a line for FILE_NAME_RE");
+  const nameLine = Number(nameCited);
+  assert.ok(
+    nameLine > 0 && nameLine <= edge.length,
+    `SWARM-CLOUD.md cites line :${nameLine} for FILE_NAME_RE, but file has ${edge.length} lines`,
+  );
+  assert.ok(
+    edge[nameLine - 1].includes("FILE_NAME_RE"),
+    `SWARM-CLOUD.md cites file-artifacts.ts:${nameLine} for FILE_NAME_RE, but line is: ${JSON.stringify(edge[nameLine - 1])}`,
+  );
+});
+
+test("src/cloud/files.ts points at active lines for FILE_MAX_VERSION_BYTES, FILE_CONTENT_WARNING, and ALLOWED_CONTENT_TYPE_RE", () => {
+  const client = read("src/cloud/files.ts");
+  const edge = read("supabase/functions/command/file-artifacts.ts").split("\n");
+  const readEdge = read("supabase/functions/read/index.ts").split("\n");
+
+  // FILE_MAX_VERSION_BYTES
+  const maxBytesCited = /supabase\/functions\/command\/file-artifacts\.ts:(\d+)\s*\(FILE_MAX_VERSION_BYTES\)/.exec(client)?.[1];
+  assert.ok(maxBytesCited, "src/cloud/files.ts no longer cites line for FILE_MAX_VERSION_BYTES");
+  const maxBytesLine = Number(maxBytesCited);
+  assert.ok(
+    edge[maxBytesLine - 1].includes("FILE_MAX_VERSION_BYTES"),
+    `src/cloud/files.ts cites file-artifacts.ts:${maxBytesLine} for FILE_MAX_VERSION_BYTES, but line is: ${JSON.stringify(edge[maxBytesLine - 1])}`,
+  );
+
+  // FILE_CONTENT_WARNING in file-artifacts.ts
+  const warnEdgeCited = /FILE_CONTENT_WARNING in supabase\/functions\/command\/file-artifacts\.ts:(\d+)/.exec(client)?.[1];
+  assert.ok(warnEdgeCited, "src/cloud/files.ts no longer cites line for edge FILE_CONTENT_WARNING");
+  const warnEdgeLine = Number(warnEdgeCited);
+  assert.ok(
+    edge[warnEdgeLine - 1].includes("FILE_CONTENT_WARNING"),
+    `src/cloud/files.ts cites file-artifacts.ts:${warnEdgeLine} for FILE_CONTENT_WARNING, but line is: ${JSON.stringify(edge[warnEdgeLine - 1])}`,
+  );
+
+  // FILE_CONTENT_WARNING in read/index.ts
+  const warnReadCited = /read\/index\.ts:(\d+)/.exec(client)?.[1];
+  assert.ok(warnReadCited, "src/cloud/files.ts no longer cites line for read/index.ts FILE_CONTENT_WARNING");
+  const warnReadLine = Number(warnReadCited);
+  assert.ok(
+    readEdge[warnReadLine - 1].includes("FILE_CONTENT_WARNING"),
+    `src/cloud/files.ts cites read/index.ts:${warnReadLine} for FILE_CONTENT_WARNING, but line is: ${JSON.stringify(readEdge[warnReadLine - 1])}`,
+  );
+
+  // ALLOWED_CONTENT_TYPE_RE
+  const allowCited = /ALLOWED_CONTENT_TYPE_RE[\s\S]*?\(file-artifacts\.ts:(\d+)\)/.exec(client)?.[1];
+  assert.ok(allowCited, "src/cloud/files.ts no longer cites line for ALLOWED_CONTENT_TYPE_RE");
+  const allowLine = Number(allowCited);
+  assert.ok(
+    edge[allowLine - 1].includes("ALLOWED_CONTENT_TYPE_RE"),
+    `src/cloud/files.ts cites file-artifacts.ts:${allowLine} for ALLOWED_CONTENT_TYPE_RE, but line is: ${JSON.stringify(edge[allowLine - 1])}`,
+  );
+
+  // AGENT_TOKEN_MAX_TTL_MS cited by symbol alone without brittle line number
+  assert.ok(
+    client.includes("AGENT_TOKEN_MAX_TTL_MS"),
+    "src/cloud/files.ts no longer names AGENT_TOKEN_MAX_TTL_MS symbol",
+  );
+  assert.ok(
+    !/command\/?index\.ts:\d+/.test(client),
+    "src/cloud/files.ts still contains a brittle command index.ts line citation instead of symbol-only reference",
+  );
+});
+
+test("acceptable-use comment cites active lines for file caps and index.ts limits", () => {
+  const page = read("site/src/pages/acceptable-use.astro");
+  const edge = read("supabase/functions/command/file-artifacts.ts").split("\n");
+  const index = read("supabase/functions/command/index.ts").split("\n");
+
+  // file-artifacts.ts:52-55 range check
+  const rangeMatch = /supabase\/functions\/command\/file-artifacts\.ts:(\d+)-(\d+)/.exec(page);
+  assert.ok(rangeMatch, "acceptable-use no longer cites line range for file caps");
+  const startLine = Number(rangeMatch[1]);
+  const endLine = Number(rangeMatch[2]);
+  const slice = edge.slice(startLine - 1, endLine).join("\n");
+  assert.ok(slice.includes("FILE_MAX_VERSION_BYTES"), `lines ${startLine}-${endLine} missing FILE_MAX_VERSION_BYTES`);
+  assert.ok(slice.includes("FILE_WORKSPACE_MAX_BYTES"), `lines ${startLine}-${endLine} missing FILE_WORKSPACE_MAX_BYTES`);
+  assert.ok(slice.includes("FILE_WORKSPACE_MAX_NAMES"), `lines ${startLine}-${endLine} missing FILE_WORKSPACE_MAX_NAMES`);
+  assert.ok(slice.includes("FILE_MAX_VERSIONS_PER_NAME"), `lines ${startLine}-${endLine} missing FILE_MAX_VERSIONS_PER_NAME`);
+
+  // FILE_MAX_VERSIONS_PER_NAME, :55
+  const verMatch = /FILE_MAX_VERSIONS_PER_NAME, :(\d+)/.exec(page);
+  assert.ok(verMatch, "acceptable-use no longer cites line for FILE_MAX_VERSIONS_PER_NAME");
+  const verLine = Number(verMatch[1]);
+  assert.ok(edge[verLine - 1].includes("FILE_MAX_VERSIONS_PER_NAME"),
+    `acceptable-use cites line ${verLine} for FILE_MAX_VERSIONS_PER_NAME, but line is: ${JSON.stringify(edge[verLine - 1])}`);
+
+  // index.ts citations
+  const checkIndex = (regex: RegExp, symbol: string) => {
+    const m = regex.exec(page);
+    assert.ok(m, `acceptable-use missing citation for ${symbol}`);
+    const line = Number(m[1]);
+    assert.ok(
+      index[line - 1].includes(symbol),
+      `acceptable-use cites index.ts:${line} for ${symbol}, but found: ${JSON.stringify(index[line - 1])}`,
+    );
+  };
+
+  checkIndex(/FREE_TIER_WORKSPACE_LIMIT,[\s*]+supabase\/functions\/command\/index\.ts:(\d+)/, "FREE_TIER_WORKSPACE_LIMIT");
+  checkIndex(/SIGNAL_CREDENTIAL_LIMIT, :(\d+)/, "SIGNAL_CREDENTIAL_LIMIT");
+  checkIndex(/SIGNAL_WORKSPACE_LIMIT, :(\d+)/, "SIGNAL_WORKSPACE_LIMIT");
+  checkIndex(/incrementRateBucket, :(\d+)/, "date_trunc('hour', statement_timestamp())");
+  checkIndex(/INVITATION_MAX_TTL_MS, :(\d+)/, "INVITATION_MAX_TTL_MS");
+  checkIndex(/AGENT_TOKEN_MAX_TTL_MS, :(\d+)/, "AGENT_TOKEN_MAX_TTL_MS");
+
+  const untilMatch = /index\.ts:(\d+)-(\d+)\s*\(SIGNAL_MAX_UNTIL_MS\)/.exec(page);
+  assert.ok(untilMatch, "acceptable-use missing citation for SIGNAL_MAX_UNTIL_MS");
+  const untilSlice = index.slice(Number(untilMatch[1]) - 1, Number(untilMatch[2])).join("\n");
+  assert.ok(untilSlice.includes("SIGNAL_MAX_UNTIL_MS"), `index.ts:${untilMatch[1]}-${untilMatch[2]} missing SIGNAL_MAX_UNTIL_MS`);
+});
+
+test("the file-artifacts design doc cites objectSize symbol alone in file-artifacts.ts", () => {
+  const doc = read("docs/design/2026-08-18-FILE-ARTIFACTS.md");
+  const edge = read("supabase/functions/command/file-artifacts.ts");
+  assert.ok(
+    doc.includes("`file-artifacts.ts`, `objectSize` at commit"),
+    "design doc no longer cites objectSize symbol in file-artifacts.ts",
+  );
+  assert.ok(
+    edge.includes("objectSize("),
+    "file-artifacts.ts no longer contains objectSize method",
+  );
+  assert.ok(
+    !/file-artifacts\.ts:\d+/.test(doc),
+    "design doc contains line citation into file-artifacts.ts instead of symbol-only citation",
+  );
+});

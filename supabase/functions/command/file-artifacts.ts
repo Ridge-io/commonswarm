@@ -108,7 +108,7 @@ export const FILE_CONTENT_WARNING =
 
 // No path separators, no C0 control characters (U+0000-U+001F; DEL U+007F and C1 U+0080-U+009F
 // are NOT refused -- see the brain topic file-name-control-chars), no leading dot or whitespace --
-// the name appears in storage paths and in Content-Disposition.
+// the name is only the download filename / Content-Disposition (not in storage object paths).
 const FILE_NAME_RE = /^(?![.\s])[^/\\\u0000-\u001f]{1,255}$/;
 
 // §5 allowlist: declared content type AND filename extension check together.
