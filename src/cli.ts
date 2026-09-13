@@ -1157,11 +1157,13 @@ export const STREAM_CHUNK_BYTE_LIMIT = 4096;
  * Reads an incremental stream of bytes and decodes strictly as UTF-8.
  * Preserves leading UTF-8 BOM (U+FEFF) as a character counted toward the cap.
  * Rejects invalid UTF-8 bytes with BodyEncodingError ("body_invalid_utf8").
- * Bounds accumulated character length to at most (maxChars + 2) at all times,
- * checking bounds before appending and slicing incoming chunks to at most 4096 bytes
- * so peak decode memory is strictly bounded, allowing for multi-byte characters and
- * at most one trailing newline (\r\n or \n) to be stripped, and aborts immediately with
- * BodyLengthError ("body_too_large") once the bound is exceeded.
+ * Rejects oversized chunks and stream byte accumulation exceeding the theoretical
+ * maximum byte length for (maxChars + 2) characters before decoding.
+ * Incoming chunks within byte limits are decoded in slices of at most
+ * STREAM_CHUNK_BYTE_LIMIT (4096 bytes), checking character length bounds before
+ * appending each slice so accumulated decoded text length never exceeds (maxChars + 2)
+ * UTF-16 code units, allowing for at most one trailing newline (\r\n or \n) to be stripped,
+ * and aborts immediately with BodyLengthError ("body_too_large") once the bound is exceeded.
  */
 export async function readBoundedUtf8Stream(
   stream: AsyncIterable<Uint8Array | Buffer | string>,
@@ -1172,14 +1174,37 @@ export async function readBoundedUtf8Stream(
     destroy?: () => void;
   },
 ): Promise<string> {
+  const safeDestroy = () => {
+    try {
+      options.destroy?.();
+    } catch {
+      // Cleanup failures must never overwrite in-flight typed errors (D-053)
+    }
+  };
+
   const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   let decoded = "";
   const sourceDesc = options.source === "file"
     ? `--body-file ${options.filePath}`
     : "--body-stdin";
+  const maxStreamBytes = (maxChars + 2) * 4;
+  let totalBytes = 0;
 
   try {
     for await (const rawChunk of stream) {
+      const rawByteLength = typeof rawChunk === "string"
+        ? Buffer.byteLength(rawChunk, "utf8")
+        : rawChunk.byteLength;
+
+      if (rawByteLength > maxStreamBytes || totalBytes + rawByteLength > maxStreamBytes) {
+        safeDestroy();
+        throw new BodyLengthError(
+          "body_too_large",
+          `signal text exceeds the maximum of ${maxChars} characters`,
+        );
+      }
+      totalBytes += rawByteLength;
+
       const chunk = Buffer.isBuffer(rawChunk)
         ? rawChunk
         : typeof rawChunk === "string"
@@ -1196,7 +1221,7 @@ export async function readBoundedUtf8Stream(
         try {
           textChunk = decoder.decode(slice, { stream: true });
         } catch {
-          options.destroy?.();
+          safeDestroy();
           throw new BodyEncodingError(
             "body_invalid_utf8",
             `could not decode ${sourceDesc} as UTF-8: signal body is not valid UTF-8`,
@@ -1204,7 +1229,7 @@ export async function readBoundedUtf8Stream(
         }
 
         if (decoded.length + textChunk.length > maxChars + 2) {
-          options.destroy?.();
+          safeDestroy();
           throw new BodyLengthError(
             "body_too_large",
             `signal text exceeds the maximum of ${maxChars} characters`,
@@ -1218,7 +1243,7 @@ export async function readBoundedUtf8Stream(
     try {
       finalChunk = decoder.decode();
     } catch {
-      options.destroy?.();
+      safeDestroy();
       throw new BodyEncodingError(
         "body_invalid_utf8",
         `could not decode ${sourceDesc} as UTF-8: signal body is not valid UTF-8`,
@@ -1226,6 +1251,7 @@ export async function readBoundedUtf8Stream(
     }
 
     if (decoded.length + finalChunk.length > maxChars + 2) {
+      safeDestroy();
       throw new BodyLengthError(
         "body_too_large",
         `signal text exceeds the maximum of ${maxChars} characters`,
@@ -1233,7 +1259,7 @@ export async function readBoundedUtf8Stream(
     }
     decoded += finalChunk;
   } catch (error) {
-    options.destroy?.();
+    safeDestroy();
     if (
       error instanceof BodyEncodingError ||
       error instanceof BodyLengthError ||
@@ -1261,7 +1287,7 @@ export async function readBoundedUtf8Stream(
       `could not read --body-file ${options.filePath}: ${detail}`,
     );
   } finally {
-    options.destroy?.();
+    safeDestroy();
   }
 
   const stripped = stripSingleTrailingNewline(decoded);

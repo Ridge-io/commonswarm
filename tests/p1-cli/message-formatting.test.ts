@@ -1161,13 +1161,17 @@ test("UTF-8 BOM: preserved as character, counted toward 8000 cap; BOM+8000 rejec
   }
 });
 
-test("memory bound: huge chunk from arbitrary iterable is checked before appending and chunk size is bounded", async () => {
+test("stream bounds: oversized chunk is rejected before decoding and chunk slices check character bound before append", async () => {
   assert.equal(STREAM_CHUNK_BYTE_LIMIT, 4096);
 
   let destroyed = false;
-  // An arbitrary iterable yields a huge chunk of 100,000 bytes
+  // An arbitrary iterable yields a huge chunk of 100,000 bytes with invalid UTF-8 byte at index 0.
+  // Because the chunk is oversized, it is rejected with body_too_large BEFORE TextDecoder is ever
+  // called, proving it is rejected before decoding or retaining rather than failing with body_invalid_utf8.
+  const hugeChunk = Buffer.alloc(100000, 0x61);
+  hugeChunk[0] = 0xff;
   async function* hugeChunkStream() {
-    yield Buffer.alloc(100000, 0x61);
+    yield hugeChunk;
   }
 
   await assert.rejects(
@@ -1178,7 +1182,7 @@ test("memory bound: huge chunk from arbitrary iterable is checked before appendi
       });
     },
     (err: unknown) => {
-      assert.ok(err instanceof BodyLengthError);
+      assert.ok(err instanceof BodyLengthError, "must be BodyLengthError, not BodyEncodingError");
       assert.equal(err.code, "body_too_large");
       assert.match(err.message, /signal text exceeds the maximum of 8000 characters/);
       return true;
@@ -1186,11 +1190,11 @@ test("memory bound: huge chunk from arbitrary iterable is checked before appendi
   );
   assert.equal(destroyed, true);
 
-  // Proves chunk-sliced decode bound: a 20KB chunk where bytes 0..8199 are valid ASCII
-  // and byte 8200 has invalid UTF-8 (0xff). Because chunks are bounded to 4096 bytes,
-  // slice 2 (4096..8191) exceeds maxChars + 2 (8002) and throws body_too_large BEFORE
+  // Proves chunk-sliced decode bound: an 8203-byte chunk where bytes 0..8199 are valid ASCII
+  // and byte 8200 has invalid UTF-8 (0xff). Because chunks are sliced to at most 4096 bytes,
+  // slice 1 (4096..8191) exceeds maxChars + 2 (8002) and throws body_too_large BEFORE
   // byte 8200 is ever decoded. Without chunk slicing, TextDecoder would process the whole
-  // 20KB chunk at once and throw body_invalid_utf8 instead of body_too_large.
+  // chunk at once and throw body_invalid_utf8 instead of body_too_large.
   const valid8200 = Buffer.alloc(8200, 0x61);
   const invalidTrailing = Buffer.from([0xff, 0xff, 0xff]);
   const bigChunkWithTrailingInvalid = Buffer.concat([valid8200, invalidTrailing]);
@@ -1211,6 +1215,97 @@ test("memory bound: huge chunk from arbitrary iterable is checked before appendi
       return true;
     },
   );
+});
+
+test("cleanup safety: throwing destroy callback never erases typed errors or stable codes (D-053)", async () => {
+  // 1. Stdin read failure with throwing destroy preserves BodyStdinError and body_stdin_unreadable
+  async function* failingStdinStream() {
+    throw new Error("raw socket disconnect error");
+  }
+  await assert.rejects(
+    async () => {
+      await readBoundedUtf8Stream(failingStdinStream(), SIGNAL_BODY_MAX, {
+        source: "stdin",
+        destroy: () => { throw new Error("destroy failed"); },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof BodyStdinError, "must be instance of BodyStdinError");
+      assert.equal((err as BodyStdinError).code, "body_stdin_unreadable");
+      assert.equal((err as BodyStdinError).name, "BodyStdinError");
+      assert.match((err as Error).message, /\[body_stdin_unreadable\] could not read --body-stdin: raw socket disconnect error/);
+      return true;
+    },
+  );
+
+  // 2. File read failure with throwing destroy preserves BodyFileError and body_file_unreadable
+  async function* failingFileStream() {
+    throw new Error("disk read I/O error");
+  }
+  await assert.rejects(
+    async () => {
+      await readBoundedUtf8Stream(failingFileStream(), SIGNAL_BODY_MAX, {
+        source: "file",
+        filePath: "/tmp/mock-signal.txt",
+        destroy: () => { throw new Error("destroy failed"); },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof BodyFileError, "must be instance of BodyFileError");
+      assert.equal((err as BodyFileError).code, "body_file_unreadable");
+      assert.equal((err as BodyFileError).name, "BodyFileError");
+      assert.match((err as Error).message, /\[body_file_unreadable\] could not read --body-file \/tmp\/mock-signal\.txt: disk read I\/O error/);
+      return true;
+    },
+  );
+
+  // 3. Length error with throwing destroy preserves BodyLengthError and body_too_large
+  async function* overLengthStream() {
+    yield Buffer.alloc(100000, 0x61);
+  }
+  await assert.rejects(
+    async () => {
+      await readBoundedUtf8Stream(overLengthStream(), SIGNAL_BODY_MAX, {
+        source: "stdin",
+        destroy: () => { throw new Error("destroy failed"); },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof BodyLengthError, "must be instance of BodyLengthError");
+      assert.equal((err as BodyLengthError).code, "body_too_large");
+      assert.equal((err as BodyLengthError).name, "BodyLengthError");
+      return true;
+    },
+  );
+
+  // 4. Invalid UTF-8 error with throwing destroy preserves BodyEncodingError and body_invalid_utf8
+  async function* invalidUtf8Stream() {
+    yield Buffer.from([0xff, 0xff]);
+  }
+  await assert.rejects(
+    async () => {
+      await readBoundedUtf8Stream(invalidUtf8Stream(), SIGNAL_BODY_MAX, {
+        source: "stdin",
+        destroy: () => { throw new Error("destroy failed"); },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof BodyEncodingError, "must be instance of BodyEncodingError");
+      assert.equal((err as BodyEncodingError).code, "body_invalid_utf8");
+      assert.equal((err as BodyEncodingError).name, "BodyEncodingError");
+      return true;
+    },
+  );
+
+  // 5. Successful stream completes normally without throwing destroy failure
+  async function* successfulStream() {
+    yield Buffer.from("clean message body\n", "utf8");
+  }
+  const body = await readBoundedUtf8Stream(successfulStream(), SIGNAL_BODY_MAX, {
+    source: "stdin",
+    destroy: () => { throw new Error("destroy failed"); },
+  });
+  assert.equal(body, "clean message body");
 });
 
 test("stdin stream failure: throwing iterable is wrapped in typed BodyStdinError with stable code body_stdin_unreadable", async () => {
@@ -1276,4 +1371,3 @@ test("positional empty bodies: newline, CRLF, and empty strings route to typed B
     server.close();
   }
 });
-
