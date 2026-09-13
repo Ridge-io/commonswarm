@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { Readable } from "node:stream";
 
 import {
   AGENT_MESSAGE_FORMAT_RULE,
@@ -280,7 +281,7 @@ test("drift test: site prompt and AGENT_QUICK_GUIDE both derive from AGENT_MESSA
   );
 });
 
-test("body source runtime gate: parser body flags equal BODY_FLAGS and each entry in BODY_SOURCES supplies a body end to end", async () => {
+test("body source runtime gate: parser registers BODY_FLAGS and every source supplies a body end to end", async () => {
   // 1. Structural check on src/cli.ts: ensure the four messages are generated from BODY_SOURCES, not typed literals
   const cliSource = await readFile(resolve(root, "src/cli.ts"), "utf8");
 
@@ -319,8 +320,57 @@ test("body source runtime gate: parser body flags equal BODY_FLAGS and each entr
     "src/cli.ts must not contain hardcoded conflict message",
   );
 
-  // 2. Parser flag classification derives from BODY_SOURCES
-  // The set of body-source flags the parser accepts equals BODY_FLAGS
+  // Verify usage() actually renders the generated synopses
+  const helpText = usage();
+  const signalUsage = formatBodyUsage("<text>");
+  const workingOnUsage = formatBodyUsage("<what>");
+  assert.ok(helpText.includes(`cswarm note ${signalUsage}`), "usage() must include note synopsis");
+  assert.ok(helpText.includes(`cswarm ask ${signalUsage}`), "usage() must include ask synopsis");
+  assert.ok(helpText.includes(`cswarm reply <signal-id> ${signalUsage}`), "usage() must include reply synopsis");
+  assert.ok(helpText.includes(`cswarm working-on ${workingOnUsage}`), "usage() must include working-on synopsis");
+
+  // 2. Parser flag registration derives from BODY_SOURCES
+  // KNOWN_FLAGS spreads ...BODY_FLAGS (for error wording during CLI parsing)
+  assert.match(
+    cliSource,
+    /export\s+const\s+KNOWN_FLAGS\s*=\s*new\s+Set\(\[\s*[\s\S]*?\.\.\.BODY_FLAGS,/,
+    "KNOWN_FLAGS must spread ...BODY_FLAGS",
+  );
+  assert.match(
+    cliSource,
+    /export\s+const\s+BOOLEAN_FLAGS\s*=\s*new\s+Set\(\[\s*[\s\S]*?\.\.\.BODY_BOOLEAN_FLAGS,/,
+    "BOOLEAN_FLAGS must spread ...BODY_BOOLEAN_FLAGS",
+  );
+
+  const knownFlagsMatch = cliSource.match(
+    /export\s+const\s+KNOWN_FLAGS\s*=\s*new\s+Set\(\[([\s\S]*?)\]\);/,
+  );
+  assert.ok(knownFlagsMatch, "KNOWN_FLAGS Set definition must be found");
+  assert.ok(
+    !knownFlagsMatch[1].includes('"body-file"') && !knownFlagsMatch[1].includes('"body-stdin"'),
+    "KNOWN_FLAGS must derive body flags via ...BODY_FLAGS, not literal strings",
+  );
+
+  const booleanFlagsMatch = cliSource.match(
+    /export\s+const\s+BOOLEAN_FLAGS\s*=\s*new\s+Set\(\[([\s\S]*?)\]\);/,
+  );
+  assert.ok(booleanFlagsMatch, "BOOLEAN_FLAGS Set definition must be found");
+  assert.ok(
+    !booleanFlagsMatch[1].includes('"body-stdin"'),
+    "BOOLEAN_FLAGS must derive body flags via ...BODY_BOOLEAN_FLAGS, not literal string",
+  );
+
+  assert.match(
+    cliSource,
+    /async\s+function\s+runPostSignal\([\s\S]*?const\s+allowedFlags\s*=\s*\[[\s\S]*?\.\.\.BODY_FLAGS,/,
+    "runPostSignal allowedFlags must spread ...BODY_FLAGS",
+  );
+  assert.match(
+    cliSource,
+    /async\s+function\s+runReply\([\s\S]*?const\s+allowedFlags\s*=\s*\[[\s\S]*?\.\.\.BODY_FLAGS,/,
+    "runReply allowedFlags must spread ...BODY_FLAGS",
+  );
+
   const parserKnownBodyFlags = [...KNOWN_FLAGS].filter((f) => f.startsWith("body-")).sort();
   const declaredBodyFlags = [...BODY_FLAGS].sort();
   assert.deepEqual(
@@ -351,7 +401,7 @@ test("body source runtime gate: parser body flags equal BODY_FLAGS and each entr
     "BODY_SOURCES must include contracted source positional",
   );
 
-  // 3. Parser runtime acceptance: accepts all declared body flags and rejects unknown body flags
+  // 3. Parser recognition: accepts all declared body flags and rejects unknown body flags
   for (const flag of BODY_FLAGS) {
     const source = BODY_SOURCES.find((s) => s.kind === "flag" && s.flag === flag);
     assert.ok(source, `every BODY_FLAG must correspond to a flag source entry`);
@@ -368,7 +418,55 @@ test("body source runtime gate: parser body flags equal BODY_FLAGS and each entr
     /unknown option --body-unknown-drift-check/,
   );
 
-  // 4. Runtime behavior: every entry in BODY_SOURCES has a wired reader and can supply a body end to end
+  // Parser acceptance enforcement: unallowed flags are rejected by assertShape in resolveSignalBody
+  const unallowedArgs = new Arguments(["note", "positional body", "--unallowed-extra-flag", "x"]);
+  await assert.rejects(
+    () => resolveSignalBody(unallowedArgs, 1, ["workspace-id", ...BODY_FLAGS]),
+    (err: any) => {
+      assert.match(err.message, /unknown option: --unallowed-extra-flag/);
+      return true;
+    },
+  );
+
+  // 4. Runtime dispatch verification: resolveSignalBody dispatches through activeSources[0].read
+  const resolveBodyMatch = cliSource.match(
+    /export\s+async\s+function\s+resolveSignalBody\([\s\S]*?\n\}/,
+  );
+  assert.ok(resolveBodyMatch, "resolveSignalBody must be found in src/cli.ts");
+  const resolveBodyCode = resolveBodyMatch[0];
+  assert.match(
+    resolveBodyCode,
+    /const\s+raw\s*=\s*await\s+activeSources\[0\]!\.read\(args,\s*positionalIndex\);/,
+    "resolveSignalBody must dispatch to activeSources[0]!.read(args, positionalIndex)",
+  );
+  assert.ok(
+    !resolveBodyCode.includes("fromFile") &&
+      !resolveBodyCode.includes("fromStdin") &&
+      !resolveBodyCode.includes("readFileBody") &&
+      !resolveBodyCode.includes("readStdinBody"),
+    "resolveSignalBody must not contain hardcoded fromFile or fromStdin branches",
+  );
+
+  const originalPositionalRead = BODY_SOURCES[0]!.read;
+  let spyDispatched = false;
+  (BODY_SOURCES[0] as any).read = () => {
+    spyDispatched = true;
+    return "spy-dispatched-body";
+  };
+  try {
+    const spyArgs = new Arguments(["note", "positional-val"]);
+    const dispatchedBody = await resolveSignalBody(spyArgs, 1, ["workspace-id", ...BODY_FLAGS]);
+    assert.equal(spyDispatched, true, "resolveSignalBody must dispatch to activeSources[0].read");
+    assert.equal(
+      dispatchedBody,
+      "spy-dispatched-body",
+      "resolveSignalBody must return the result of activeSources[0].read",
+    );
+  } finally {
+    (BODY_SOURCES[0] as any).read = originalPositionalRead;
+  }
+
+  // 5. Runtime behavior: every entry in BODY_SOURCES has a wired reader and can supply a body end to end
   const dir = await mkdtemp(resolve(tmpdir(), "cswarm-msgfmt-gate-"));
   try {
     for (const source of BODY_SOURCES) {
@@ -388,7 +486,15 @@ test("body source runtime gate: parser body flags equal BODY_FLAGS and each entr
         const args = new Arguments(["note", "--body-file", tmpFile]);
         const body = await resolveSignalBody(args, 1, ["workspace-id", ...BODY_FLAGS]);
         assert.equal(body, "gate file body");
-      } else if (!source.usesStdin) {
+      } else if (source.usesStdin) {
+        // Direct stream reading test on stdin source
+        const streamResult = await source.read(
+          new Arguments(["note", `--${source.flag}`]),
+          1,
+          Readable.from([Buffer.from("gate direct stream body\n")]),
+        );
+        assert.equal(streamResult, "gate direct stream body");
+      } else {
         // Any newly added non-stdin source must supply a valid non-empty body when invoked
         const args = source.boolean
           ? new Arguments(["note", `--${source.flag}`])
@@ -432,7 +538,7 @@ test("body source runtime gate: parser body flags equal BODY_FLAGS and each entr
     await rm(dir, { recursive: true, force: true });
   }
 
-  // 5. Stdin exclusion check derives from BODY_SOURCES
+  // 6. Stdin exclusion check derives from BODY_SOURCES
   for (const source of BODY_SOURCES.filter((s) => s.usesStdin && s.kind === "flag")) {
     const conflictArgs = new Arguments([
       "note",
@@ -447,6 +553,50 @@ test("body source runtime gate: parser body flags equal BODY_FLAGS and each entr
         return true;
       },
     );
+  }
+
+  // Dynamic stdin exclusion: prove exclusion derives from BODY_SOURCES.find(...) and is not hardcoded to --body-stdin
+  const dynamicStdinSource = {
+    name: "body-dynamic-stdin",
+    kind: "flag" as const,
+    flag: "body-dynamic-stdin",
+    boolean: true,
+    usesStdin: true,
+    conflictLabel: "--body-dynamic-stdin",
+    missingLabel: "--body-dynamic-stdin",
+    usageToken: () => "--body-dynamic-stdin",
+    isPresent: (args: Arguments) => args.has("body-dynamic-stdin"),
+    read: () => "dynamic stdin body",
+  };
+  (BODY_SOURCES as any).push(dynamicStdinSource);
+  KNOWN_FLAGS.add("body-dynamic-stdin");
+  BOOLEAN_FLAGS.add("body-dynamic-stdin");
+  try {
+    const dynamicConflictArgs = new Arguments([
+      "note",
+      "--body-dynamic-stdin",
+      "--agent-token-stdin",
+    ]);
+    await assert.rejects(
+      () =>
+        resolveSignalBody(
+          dynamicConflictArgs,
+          1,
+          ["workspace-id", "agent-token-stdin", ...BODY_FLAGS, "body-dynamic-stdin"],
+        ),
+      (err: any) => {
+        assert.equal(err.code, "body_stdin_token_stdin_conflict");
+        assert.ok(
+          err.message.includes("--body-dynamic-stdin"),
+          "stdin conflict error message must derive from the dynamic source's conflictLabel",
+        );
+        return true;
+      },
+    );
+  } finally {
+    (BODY_SOURCES as any).pop();
+    KNOWN_FLAGS.delete("body-dynamic-stdin");
+    BOOLEAN_FLAGS.delete("body-dynamic-stdin");
   }
 });
 

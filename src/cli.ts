@@ -412,16 +412,29 @@ async function readFileBody(args: Arguments): Promise<string> {
   }
 }
 
-async function readStdinBody(): Promise<string> {
-  if (process.stdin.isTTY) {
+export type ByteStream = AsyncIterable<Uint8Array | Buffer> & {
+  isTTY?: boolean;
+  destroy?: () => void;
+};
+
+async function readStdinBody(
+  _args?: Arguments,
+  _positionalIndex?: number,
+  stream: ByteStream = process.stdin,
+): Promise<string> {
+  if (stream.isTTY) {
     throw new BodyStdinError(
       "body_stdin_tty",
       "--body-stdin requires piped input; it is never accepted from a terminal",
     );
   }
-  return await readBoundedUtf8Stream(process.stdin, SIGNAL_BODY_MAX, {
+  return await readBoundedUtf8Stream(stream, SIGNAL_BODY_MAX, {
     source: "stdin",
-    destroy: () => process.stdin.destroy(),
+    destroy: () => {
+      if (typeof stream.destroy === "function") {
+        stream.destroy();
+      }
+    },
   });
 }
 
@@ -439,7 +452,32 @@ export interface BodySource {
   readonly missingLabel: string;
   readonly usageToken: (positionalPlaceholder: string) => string;
   readonly isPresent: (args: Arguments, positionalIndex: number) => boolean;
-  readonly read: (args: Arguments, positionalIndex: number) => Promise<string> | string;
+  readonly read: (args: Arguments, positionalIndex: number, stream?: ByteStream) => Promise<string> | string;
+}
+
+function makeFlagSource(def: {
+  name: string;
+  flag: string;
+  boolean?: boolean;
+  usesStdin?: boolean;
+  missingSuffix?: string;
+  read: (args: Arguments, positionalIndex: number, stream?: ByteStream) => Promise<string> | string;
+}): BodySource {
+  const flag = def.flag;
+  const suffix = def.missingSuffix ? ` ${def.missingSuffix}` : "";
+  return {
+    name: def.name,
+    kind: "flag",
+    flag,
+    boolean: def.boolean,
+    usesStdin: def.usesStdin,
+    conflictLabel: `--${flag}`,
+    missingLabel: `--${flag}${suffix}`,
+    usageToken: () => `--${flag}${suffix}`,
+    isPresent: (args: Arguments) =>
+      def.boolean ? args.has(flag) : args.optional(flag) !== undefined,
+    read: def.read,
+  };
 }
 
 export const BODY_SOURCES: readonly BodySource[] = [
@@ -453,29 +491,20 @@ export const BODY_SOURCES: readonly BodySource[] = [
       args.positionals.length > positionalIndex,
     read: readPositionalBody,
   },
-  {
+  makeFlagSource({
     name: "body-file",
-    kind: "flag",
     flag: "body-file",
-    conflictLabel: "--body-file",
-    missingLabel: "--body-file <path>",
-    usageToken: () => "--body-file <path>",
-    isPresent: (args: Arguments) => args.optional("body-file") !== undefined,
+    missingSuffix: "<path>",
     read: readFileBody,
-  },
-  {
+  }),
+  makeFlagSource({
     name: "body-stdin",
-    kind: "flag",
     flag: "body-stdin",
     boolean: true,
     usesStdin: true,
-    conflictLabel: "--body-stdin",
-    missingLabel: "--body-stdin",
-    usageToken: () => "--body-stdin",
-    isPresent: (args: Arguments) => args.has("body-stdin"),
     read: readStdinBody,
-  },
-] as const;
+  }),
+];
 
 export const BODY_FLAGS: readonly string[] = BODY_SOURCES
   .filter((s): s is BodySource & { flag: string } => s.kind === "flag" && typeof s.flag === "string")
@@ -1442,7 +1471,7 @@ export async function readBoundedUtf8Stream(
 }
 
 /**
- * Read the signal body from exactly one source: positional argv, --body-file, or --body-stdin.
+ * Read the signal body from exactly one source declared in BODY_SOURCES.
  * Sends the payload to the server unchanged apart from stripping at most one trailing newline:
  * no trimming beyond that single trailing newline, no client-side re-wrapping, no newline
  * normalisation, and no unescaping (the server then applies its documented sanitizer to stored text).
