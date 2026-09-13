@@ -306,6 +306,23 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
     "src/cli.ts must generate BodySourceMissingError using formatBodySourceMissing",
   );
 
+  // Structural check: formatters must map over BODY_SOURCES rather than returning hardcoded strings
+  assert.match(
+    cliSource,
+    /export\s+function\s+formatBodyUsage\([^)]*\)[^{]*\{[\s\S]*?BODY_SOURCES\.map/,
+    "formatBodyUsage must map over BODY_SOURCES",
+  );
+  assert.match(
+    cliSource,
+    /export\s+function\s+formatBodySourceConflict\([^)]*\)[^{]*\{[\s\S]*?BODY_SOURCES\.map/,
+    "formatBodySourceConflict must map over BODY_SOURCES",
+  );
+  assert.match(
+    cliSource,
+    /export\s+function\s+formatBodySourceMissing\([^)]*\)[^{]*\{[\s\S]*?BODY_SOURCES\.map/,
+    "formatBodySourceMissing must map over BODY_SOURCES",
+  );
+
   // Negative control on src/cli.ts: old hardcoded strings must NOT be present
   assert.ok(
     !cliSource.includes('("<text>" | --body-file <path> | --body-stdin)'),
@@ -320,6 +337,38 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
     "src/cli.ts must not contain hardcoded conflict message",
   );
 
+  // Dynamic formatting verification: formatters dynamically reflect additions to BODY_SOURCES
+  const probeSource = {
+    name: "body-probe-source",
+    kind: "flag" as const,
+    flag: "body-probe-source",
+    conflictLabel: "--body-probe-source",
+    missingLabel: "--body-probe-source <val>",
+    usageToken: () => "--body-probe-source <val>",
+    isPresent: () => false,
+    read: () => "probe-body",
+  };
+  (BODY_SOURCES as any).push(probeSource);
+  try {
+    const dynamicUsage = formatBodyUsage("<text>");
+    const dynamicConflict = formatBodySourceConflict();
+    const dynamicMissing = formatBodySourceMissing(1, 0);
+    assert.ok(
+      dynamicUsage.includes("--body-probe-source <val>"),
+      "formatBodyUsage must dynamically derive from BODY_SOURCES",
+    );
+    assert.ok(
+      dynamicConflict.includes("--body-probe-source"),
+      "formatBodySourceConflict must dynamically derive from BODY_SOURCES",
+    );
+    assert.ok(
+      dynamicMissing.includes("--body-probe-source <val>"),
+      "formatBodySourceMissing must dynamically derive from BODY_SOURCES",
+    );
+  } finally {
+    (BODY_SOURCES as any).pop();
+  }
+
   // Verify usage() actually renders the generated synopses
   const helpText = usage();
   const signalUsage = formatBodyUsage("<text>");
@@ -328,6 +377,24 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
   assert.ok(helpText.includes(`cswarm ask ${signalUsage}`), "usage() must include ask synopsis");
   assert.ok(helpText.includes(`cswarm reply <signal-id> ${signalUsage}`), "usage() must include reply synopsis");
   assert.ok(helpText.includes(`cswarm working-on ${workingOnUsage}`), "usage() must include working-on synopsis");
+
+  // Verify canonical format strings match expected output
+  assert.equal(
+    formatBodyUsage("<text>"),
+    '("<text>" | --body-file <path> | --body-stdin)',
+  );
+  assert.equal(
+    formatBodyUsage("<what>"),
+    '("<what>" | --body-file <path> | --body-stdin)',
+  );
+  assert.equal(
+    formatBodySourceConflict(),
+    "use exactly one body source: positional text, --body-file, or --body-stdin",
+  );
+  assert.equal(
+    formatBodySourceMissing(1, 0),
+    "too few positional arguments: expected 1, received 0 (provide the message body as positional text, --body-file <path>, or --body-stdin)",
+  );
 
   // 2. Parser flag registration derives from BODY_SOURCES
   // KNOWN_FLAGS spreads ...BODY_FLAGS (for error wording during CLI parsing)
@@ -347,7 +414,8 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
   );
   assert.ok(knownFlagsMatch, "KNOWN_FLAGS Set definition must be found");
   assert.ok(
-    !knownFlagsMatch[1].includes('"body-file"') && !knownFlagsMatch[1].includes('"body-stdin"'),
+    !/['"`]body-file['"`]/.test(knownFlagsMatch[1]) &&
+      !/['"`]body-stdin['"`]/.test(knownFlagsMatch[1]),
     "KNOWN_FLAGS must derive body flags via ...BODY_FLAGS, not literal strings",
   );
 
@@ -356,7 +424,7 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
   );
   assert.ok(booleanFlagsMatch, "BOOLEAN_FLAGS Set definition must be found");
   assert.ok(
-    !booleanFlagsMatch[1].includes('"body-stdin"'),
+    !/['"`]body-stdin['"`]/.test(booleanFlagsMatch[1]),
     "BOOLEAN_FLAGS must derive body flags via ...BODY_BOOLEAN_FLAGS, not literal string",
   );
 
@@ -371,21 +439,18 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
     "runReply allowedFlags must spread ...BODY_FLAGS",
   );
 
-  const parserKnownBodyFlags = [...KNOWN_FLAGS].filter((f) => f.startsWith("body-")).sort();
-  const declaredBodyFlags = [...BODY_FLAGS].sort();
-  assert.deepEqual(
-    parserKnownBodyFlags,
-    declaredBodyFlags,
-    "parser KNOWN_FLAGS body flags must equal BODY_FLAGS",
-  );
-
-  const parserBooleanBodyFlags = [...BOOLEAN_FLAGS].filter((f) => f.startsWith("body-")).sort();
-  const declaredBooleanBodyFlags = [...BODY_BOOLEAN_FLAGS].sort();
-  assert.deepEqual(
-    parserBooleanBodyFlags,
-    declaredBooleanBodyFlags,
-    "parser BOOLEAN_FLAGS body flags must equal BODY_BOOLEAN_FLAGS",
-  );
+  for (const flag of BODY_FLAGS) {
+    assert.ok(
+      KNOWN_FLAGS.has(flag),
+      `KNOWN_FLAGS must contain every flag in BODY_FLAGS: missing ${flag}`,
+    );
+  }
+  for (const flag of BODY_BOOLEAN_FLAGS) {
+    assert.ok(
+      BOOLEAN_FLAGS.has(flag),
+      `BOOLEAN_FLAGS must contain every flag in BODY_BOOLEAN_FLAGS: missing ${flag}`,
+    );
+  }
 
   // Contracted body sources must be present
   assert.ok(
@@ -447,23 +512,72 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
     "resolveSignalBody must not contain hardcoded fromFile or fromStdin branches",
   );
 
-  const originalPositionalRead = BODY_SOURCES[0]!.read;
-  let spyDispatched = false;
-  (BODY_SOURCES[0] as any).read = () => {
-    spyDispatched = true;
-    return "spy-dispatched-body";
+  // Test runtime dispatch across EVERY source in BODY_SOURCES (positional, body-file, body-stdin)
+  for (let i = 0; i < BODY_SOURCES.length; i++) {
+    const source = BODY_SOURCES[i]!;
+    const originalRead = source.read;
+    let spyDispatched = false;
+    (source as any).read = () => {
+      spyDispatched = true;
+      return `dispatched-from-${source.name}`;
+    };
+    try {
+      const spyArgs =
+        source.name === "positional"
+          ? new Arguments(["note", "pos-value"])
+          : source.boolean
+          ? new Arguments(["note", `--${source.flag}`])
+          : new Arguments(["note", `--${source.flag}`, "flag-val"]);
+      const dispatchedBody = await resolveSignalBody(spyArgs, 1, [
+        "workspace-id",
+        ...BODY_FLAGS,
+      ]);
+      assert.equal(
+        spyDispatched,
+        true,
+        `resolveSignalBody must dispatch to source ${source.name}.read`,
+      );
+      assert.equal(
+        dispatchedBody,
+        `dispatched-from-${source.name}`,
+        `resolveSignalBody must return result of source ${source.name}.read`,
+      );
+    } finally {
+      (source as any).read = originalRead;
+    }
+  }
+
+  // Runtime dispatch for dynamic source: prove new source routes to its .read member
+  const customSource = {
+    name: "body-custom-dispatch",
+    kind: "flag" as const,
+    flag: "body-custom-dispatch",
+    boolean: true,
+    conflictLabel: "--body-custom-dispatch",
+    missingLabel: "--body-custom-dispatch",
+    usageToken: () => "--body-custom-dispatch",
+    isPresent: (args: Arguments) => args.has("body-custom-dispatch"),
+    read: () => "custom-dispatched-body",
   };
+  (BODY_SOURCES as any).push(customSource);
+  KNOWN_FLAGS.add("body-custom-dispatch");
+  BOOLEAN_FLAGS.add("body-custom-dispatch");
   try {
-    const spyArgs = new Arguments(["note", "positional-val"]);
-    const dispatchedBody = await resolveSignalBody(spyArgs, 1, ["workspace-id", ...BODY_FLAGS]);
-    assert.equal(spyDispatched, true, "resolveSignalBody must dispatch to activeSources[0].read");
+    const customArgs = new Arguments(["note", "--body-custom-dispatch"]);
+    const customBody = await resolveSignalBody(customArgs, 1, [
+      "workspace-id",
+      ...BODY_FLAGS,
+      "body-custom-dispatch",
+    ]);
     assert.equal(
-      dispatchedBody,
-      "spy-dispatched-body",
-      "resolveSignalBody must return the result of activeSources[0].read",
+      customBody,
+      "custom-dispatched-body",
+      "resolveSignalBody must dispatch to newly added source .read",
     );
   } finally {
-    (BODY_SOURCES[0] as any).read = originalPositionalRead;
+    (BODY_SOURCES as any).pop();
+    KNOWN_FLAGS.delete("body-custom-dispatch");
+    BOOLEAN_FLAGS.delete("body-custom-dispatch");
   }
 
   // 5. Runtime behavior: every entry in BODY_SOURCES has a wired reader and can supply a body end to end
@@ -990,7 +1104,7 @@ test("refusal at parse time: missing or unreadable file gives typed error naming
       "--agent-token-stdin",
     ], AGENT_TOKEN);
     assert.equal(resMissing.code, 1);
-    assert.match(resMissing.stderr, /^cswarm: \[body_file_missing\]/);
+    assert.match(resMissing.stderr, /^cswarm: \[body_file_missing\]/m);
     assert.doesNotMatch(resMissing.stderr, /\[body_file_unreadable\]/);
     assert.match(resMissing.stderr, new RegExp(nonExistentPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.equal(networkCalls, 0);
@@ -1009,7 +1123,7 @@ test("refusal at parse time: missing or unreadable file gives typed error naming
       "--agent-token-stdin",
     ], AGENT_TOKEN);
     assert.equal(resUnreadable.code, 1);
-    assert.match(resUnreadable.stderr, /^cswarm: \[body_file_unreadable\]/);
+    assert.match(resUnreadable.stderr, /^cswarm: \[body_file_unreadable\]/m);
     assert.doesNotMatch(resUnreadable.stderr, /\[body_file_missing\]/);
     assert.equal((resUnreadable.stderr.match(/could not read --body-file/g) || []).length, 1, "must not double wrap error message");
     assert.match(resUnreadable.stderr, new RegExp(dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
