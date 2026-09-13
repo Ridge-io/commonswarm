@@ -373,6 +373,145 @@ function loadHostOpenCode(): Promise<typeof import("./host/opencode.js")> {
   return import("./host/opencode.js");
 }
 
+async function readPositionalBody(
+  args: Arguments,
+  positionalIndex: number,
+): Promise<string> {
+  return stripSingleTrailingNewline(args.positionals[positionalIndex]!);
+}
+
+async function readFileBody(args: Arguments): Promise<string> {
+  const fromFile = args.optional("body-file")!;
+  try {
+    const stream = createReadStream(fromFile, { highWaterMark: 4096 });
+    return await readBoundedUtf8Stream(stream, SIGNAL_BODY_MAX, {
+      source: "file",
+      filePath: fromFile,
+      destroy: () => stream.destroy(),
+    });
+  } catch (error) {
+    if (
+      error instanceof BodyEncodingError || error instanceof BodyLengthError ||
+      error instanceof BodyEmptyError || error instanceof BodyFileError ||
+      error instanceof BodyStdinError
+    ) {
+      throw error;
+    }
+    const code = (() => { try { return (error as NodeJS.ErrnoException)?.code; } catch { return undefined; } })();
+    if (code === "ENOENT") {
+      throw new BodyFileError(
+        "body_file_missing",
+        `--body-file does not exist: ${fromFile}`,
+      );
+    }
+    const detail = error instanceof Error ? error.message : "unknown read failure";
+    throw new BodyFileError(
+      "body_file_unreadable",
+      `could not read --body-file ${fromFile}: ${detail}`,
+    );
+  }
+}
+
+async function readStdinBody(): Promise<string> {
+  if (process.stdin.isTTY) {
+    throw new BodyStdinError(
+      "body_stdin_tty",
+      "--body-stdin requires piped input; it is never accepted from a terminal",
+    );
+  }
+  return await readBoundedUtf8Stream(process.stdin, SIGNAL_BODY_MAX, {
+    source: "stdin",
+    destroy: () => process.stdin.destroy(),
+  });
+}
+
+/**
+ * Body source definition. Exported so user-facing usage help, conflict errors,
+ * missing-source errors, flag registration, and body reading all derive from one constant set.
+ */
+export interface BodySource {
+  readonly name: string;
+  readonly kind: "positional" | "flag";
+  readonly flag?: string;
+  readonly boolean?: boolean;
+  readonly usesStdin?: boolean;
+  readonly conflictLabel: string;
+  readonly missingLabel: string;
+  readonly usageToken: (positionalPlaceholder: string) => string;
+  readonly isPresent: (args: Arguments, positionalIndex: number) => boolean;
+  readonly read: (args: Arguments, positionalIndex: number) => Promise<string> | string;
+}
+
+export const BODY_SOURCES: readonly BodySource[] = [
+  {
+    name: "positional",
+    kind: "positional",
+    conflictLabel: "positional text",
+    missingLabel: "positional text",
+    usageToken: (ph: string) => `"${ph}"`,
+    isPresent: (args: Arguments, positionalIndex: number) =>
+      args.positionals.length > positionalIndex,
+    read: readPositionalBody,
+  },
+  {
+    name: "body-file",
+    kind: "flag",
+    flag: "body-file",
+    conflictLabel: "--body-file",
+    missingLabel: "--body-file <path>",
+    usageToken: () => "--body-file <path>",
+    isPresent: (args: Arguments) => args.optional("body-file") !== undefined,
+    read: readFileBody,
+  },
+  {
+    name: "body-stdin",
+    kind: "flag",
+    flag: "body-stdin",
+    boolean: true,
+    usesStdin: true,
+    conflictLabel: "--body-stdin",
+    missingLabel: "--body-stdin",
+    usageToken: () => "--body-stdin",
+    isPresent: (args: Arguments) => args.has("body-stdin"),
+    read: readStdinBody,
+  },
+] as const;
+
+export const BODY_FLAGS: readonly string[] = BODY_SOURCES
+  .filter((s): s is BodySource & { flag: string } => s.kind === "flag" && typeof s.flag === "string")
+  .map((s) => s.flag);
+
+export const BODY_BOOLEAN_FLAGS: readonly string[] = BODY_SOURCES
+  .filter((s): s is BodySource & { flag: string } => s.kind === "flag" && typeof s.flag === "string" && s.boolean === true)
+  .map((s) => s.flag);
+
+/** Format an item list with an Oxford comma and "or" conjunction. */
+export function formatOrList(items: readonly string[]): string {
+  if (items.length === 0) return "";
+  if (items.length === 1) return items[0]!;
+  if (items.length === 2) return `${items[0]} or ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, or ${items[items.length - 1]}`;
+}
+
+/** Formats the body usage synopsis entry from BODY_SOURCES. */
+export function formatBodyUsage(positionalPlaceholder: string): string {
+  return `(${BODY_SOURCES.map((s) => s.usageToken(positionalPlaceholder)).join(" | ")})`;
+}
+
+/** Formats the body source conflict error message. */
+export function formatBodySourceConflict(): string {
+  return `use exactly one body source: ${formatOrList(BODY_SOURCES.map((s) => s.conflictLabel))}`;
+}
+
+/** Formats the body source missing error message. */
+export function formatBodySourceMissing(
+  expectedPositionals: number,
+  receivedPositionals: number,
+): string {
+  const remedy = formatOrList(BODY_SOURCES.map((s) => s.missingLabel));
+  return `too few positional arguments: expected ${expectedPositionals}, received ${receivedPositionals} (provide the message body as ${remedy})`;
+}
+
 /**
  * Every flag this build accepts, for ERROR WORDING ONLY — never for acceptance. See the throw in
  * the parser for why that distinction is load-bearing. Kept honest by a gate that reads the
@@ -380,7 +519,8 @@ function loadHostOpenCode(): Promise<typeof import("./host/opencode.js")> {
  */
 export const KNOWN_FLAGS = new Set([
   ...ONBOARDING_BOOLEAN_FLAGS, ...ONBOARDING_VALUE_FLAGS,
-  "about", "agent-token-file", "agent-token-stdin", "all-devices", "allow-unattended", "anon-key", "attach", "body-file", "body-stdin", "branch", "capability-id",
+  ...BODY_FLAGS,
+  "about", "agent-token-file", "agent-token-stdin", "all-devices", "allow-unattended", "anon-key", "attach", "branch", "capability-id",
   "claude-executable", "codex-executable", "confirm", "confirm-standing", "cooldown", "cwd", "defer-over", "device-id", "effort", "email",
   "epoch", "evidence", "follow", "force", "force-file-store", "foreground", "grok-executable", "head-sha",
   "broadcast-to-channel", "channel",
@@ -392,10 +532,10 @@ export const KNOWN_FLAGS = new Set([
   "session-context", "host-session-id", "host-label", "allow-duplicate-name", "mode",
 ]);
 
-const BOOLEAN_FLAGS = new Set([
+export const BOOLEAN_FLAGS = new Set([
   ...ONBOARDING_BOOLEAN_FLAGS,
+  ...BODY_BOOLEAN_FLAGS,
   "agent-token-stdin",
-  "body-stdin",
   "all-devices",
   "allow-unattended",
   "broadcast-to-channel",
@@ -454,7 +594,7 @@ function packageVersion(): string {
 
 const CLI_BUILD_VERSION = packageVersion();
 
-class Arguments {
+export class Arguments {
   readonly positionals: string[] = [];
   private readonly flags = new Map<string, string[]>();
 
@@ -579,80 +719,6 @@ class Arguments {
 const TARGET_FLAGS = ["url", "anon-key", "force-file-store"] as const;
 const ROUTE_FLAGS = ["workspace-id", "repo-mapping-id"] as const;
 const CREDENTIAL_FLAGS = ["agent-token-file", "agent-token-stdin"] as const;
-/**
- * Body source definition. Exported so user-facing usage help, conflict errors,
- * missing-source errors, and argument parsers all derive from one constant set.
- */
-export interface BodySource {
-  readonly name: string;
-  readonly kind: "positional" | "flag";
-  readonly flag?: string;
-  readonly conflictLabel: string;
-  readonly missingLabel: string;
-  readonly usageToken: (positionalPlaceholder: string) => string;
-  readonly isPresent: (args: Arguments, positionalIndex: number) => boolean;
-}
-
-export const BODY_SOURCES: readonly BodySource[] = [
-  {
-    name: "positional",
-    kind: "positional",
-    conflictLabel: "positional text",
-    missingLabel: "positional text",
-    usageToken: (ph: string) => `"${ph}"`,
-    isPresent: (args: Arguments, positionalIndex: number) =>
-      args.positionals.length > positionalIndex,
-  },
-  {
-    name: "body-file",
-    kind: "flag",
-    flag: "body-file",
-    conflictLabel: "--body-file",
-    missingLabel: "--body-file <path>",
-    usageToken: () => "--body-file <path>",
-    isPresent: (args: Arguments) => args.optional("body-file") !== undefined,
-  },
-  {
-    name: "body-stdin",
-    kind: "flag",
-    flag: "body-stdin",
-    conflictLabel: "--body-stdin",
-    missingLabel: "--body-stdin",
-    usageToken: () => "--body-stdin",
-    isPresent: (args: Arguments) => args.has("body-stdin"),
-  },
-] as const;
-
-export const BODY_FLAGS: readonly string[] = BODY_SOURCES
-  .filter((s): s is BodySource & { flag: string } => s.kind === "flag" && typeof s.flag === "string")
-  .map((s) => s.flag);
-
-/** Format an item list with an Oxford comma and "or" conjunction. */
-export function formatOrList(items: readonly string[]): string {
-  if (items.length === 0) return "";
-  if (items.length === 1) return items[0]!;
-  if (items.length === 2) return `${items[0]} or ${items[1]}`;
-  return `${items.slice(0, -1).join(", ")}, or ${items[items.length - 1]}`;
-}
-
-/** Formats the body usage synopsis entry from BODY_SOURCES. */
-export function formatBodyUsage(positionalPlaceholder: string): string {
-  return `(${BODY_SOURCES.map((s) => s.usageToken(positionalPlaceholder)).join(" | ")})`;
-}
-
-/** Formats the body source conflict error message. */
-export function formatBodySourceConflict(): string {
-  return `use exactly one body source: ${formatOrList(BODY_SOURCES.map((s) => s.conflictLabel))}`;
-}
-
-/** Formats the body source missing error message. */
-export function formatBodySourceMissing(
-  expectedPositionals: number,
-  receivedPositionals: number,
-): string {
-  const remedy = formatOrList(BODY_SOURCES.map((s) => s.missingLabel));
-  return `too few positional arguments: expected ${expectedPositionals}, received ${receivedPositionals} (provide the message body as ${remedy})`;
-}
 
 const SESSION_CONTEXT_FLAGS = ["session-context"] as const;
 const TASK_FLAGS = [
@@ -1386,14 +1452,16 @@ export async function resolveSignalBody(
   positionalIndex: number,
   allowedFlags: readonly string[],
 ): Promise<string> {
-  const fromFile = args.optional("body-file");
-  const fromStdin = args.has("body-stdin");
-
-  if (fromStdin && args.has("agent-token-stdin")) {
-    throw new BodyStdinConflictError(
-      "body_stdin_token_stdin_conflict",
-      "cannot read both message body and agent credential from stdin: --body-stdin and --agent-token-stdin cannot be combined",
+  if (args.has("agent-token-stdin")) {
+    const stdinSource = BODY_SOURCES.find(
+      (source) => source.usesStdin && source.isPresent(args, positionalIndex),
     );
+    if (stdinSource) {
+      throw new BodyStdinConflictError(
+        "body_stdin_token_stdin_conflict",
+        `cannot read both message body and agent credential from stdin: ${stdinSource.conflictLabel} and --agent-token-stdin cannot be combined`,
+      );
+    }
   }
 
   const activeSources = BODY_SOURCES.filter((source) =>
@@ -1423,50 +1491,7 @@ export async function resolveSignalBody(
 
   args.assertShape(allowedFlags, expectedPositionals);
 
-  let raw: string;
-  if (fromFile !== undefined) {
-    try {
-      const stream = createReadStream(fromFile, { highWaterMark: 4096 });
-      raw = await readBoundedUtf8Stream(stream, SIGNAL_BODY_MAX, {
-        source: "file",
-        filePath: fromFile,
-        destroy: () => stream.destroy(),
-      });
-    } catch (error) {
-      if (
-        error instanceof BodyEncodingError || error instanceof BodyLengthError ||
-        error instanceof BodyEmptyError || error instanceof BodyFileError ||
-        error instanceof BodyStdinError
-      ) {
-        throw error;
-      }
-      const code = (() => { try { return (error as NodeJS.ErrnoException)?.code; } catch { return undefined; } })();
-      if (code === "ENOENT") {
-        throw new BodyFileError(
-          "body_file_missing",
-          `--body-file does not exist: ${fromFile}`,
-        );
-      }
-      const detail = error instanceof Error ? error.message : "unknown read failure";
-      throw new BodyFileError(
-        "body_file_unreadable",
-        `could not read --body-file ${fromFile}: ${detail}`,
-      );
-    }
-  } else if (fromStdin) {
-    if (process.stdin.isTTY) {
-      throw new BodyStdinError(
-        "body_stdin_tty",
-        "--body-stdin requires piped input; it is never accepted from a terminal",
-      );
-    }
-    raw = await readBoundedUtf8Stream(process.stdin, SIGNAL_BODY_MAX, {
-      source: "stdin",
-      destroy: () => process.stdin.destroy(),
-    });
-  } else {
-    raw = stripSingleTrailingNewline(args.positionals[positionalIndex]!);
-  }
+  const raw = await activeSources[0]!.read(args, positionalIndex);
 
   if (raw.trim().length === 0) {
     throw new BodyEmptyError(

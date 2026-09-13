@@ -15,8 +15,11 @@ import {
   MESSAGE_BLOB_MIN_LENGTH,
 } from "../../src/cloud/agent-onboarding-contract.js";
 import {
+  Arguments,
+  BODY_BOOLEAN_FLAGS,
   BODY_FLAGS,
   BODY_SOURCES,
+  BOOLEAN_FLAGS,
   BodyEmptyError,
   BodyEncodingError,
   BodyFileError,
@@ -28,6 +31,7 @@ import {
   BodyStdinError,
   FORMAT_ADVISORY_FIELD,
   FORMAT_ADVISORY_MESSAGE,
+  KNOWN_FLAGS,
   SIGNAL_BODY_MAX,
   STREAM_CHUNK_BYTE_LIMIT,
   formatBodySourceConflict,
@@ -36,6 +40,7 @@ import {
   formatOrList,
   messageFormatAdvisory,
   readBoundedUtf8Stream,
+  resolveSignalBody,
   stripSingleTrailingNewline,
   usage,
 } from "../../src/cli.js";
@@ -275,7 +280,7 @@ test("drift test: site prompt and AGENT_QUICK_GUIDE both derive from AGENT_MESSA
   );
 });
 
-test("body source consistency gate: all four user-facing messages derive from BODY_SOURCES and fail if any source drifts", async () => {
+test("body source runtime gate: parser body flags equal BODY_FLAGS and each entry in BODY_SOURCES supplies a body end to end", async () => {
   // 1. Structural check on src/cli.ts: ensure the four messages are generated from BODY_SOURCES, not typed literals
   const cliSource = await readFile(resolve(root, "src/cli.ts"), "utf8");
 
@@ -314,106 +319,135 @@ test("body source consistency gate: all four user-facing messages derive from BO
     "src/cli.ts must not contain hardcoded conflict message",
   );
 
-  // 2. Exact match between BODY_FLAGS and BODY_SOURCES
-  const expectedBodyFlags = BODY_SOURCES
-    .filter((s) => s.kind === "flag")
-    .map((s) => s.flag);
+  // 2. Parser flag classification derives from BODY_SOURCES
+  // The set of body-source flags the parser accepts equals BODY_FLAGS
+  const parserKnownBodyFlags = [...KNOWN_FLAGS].filter((f) => f.startsWith("body-")).sort();
+  const declaredBodyFlags = [...BODY_FLAGS].sort();
   assert.deepEqual(
-    [...BODY_FLAGS],
-    expectedBodyFlags,
-    "BODY_FLAGS must match flag sources declared in BODY_SOURCES",
+    parserKnownBodyFlags,
+    declaredBodyFlags,
+    "parser KNOWN_FLAGS body flags must equal BODY_FLAGS",
   );
 
-  // 3. Live surfaces must contain all sources declared in BODY_SOURCES
-  const helpText = usage();
-  const signalUsage = formatBodyUsage("<text>");
-  const workingOnUsage = formatBodyUsage("<what>");
-  const conflictMsg = formatBodySourceConflict();
-  const missingMsg = formatBodySourceMissing(1, 0);
+  const parserBooleanBodyFlags = [...BOOLEAN_FLAGS].filter((f) => f.startsWith("body-")).sort();
+  const declaredBooleanBodyFlags = [...BODY_BOOLEAN_FLAGS].sort();
+  assert.deepEqual(
+    parserBooleanBodyFlags,
+    declaredBooleanBodyFlags,
+    "parser BOOLEAN_FLAGS body flags must equal BODY_BOOLEAN_FLAGS",
+  );
 
-  // Verify all 4 message strings contain every source declared in BODY_SOURCES
-  for (const source of BODY_SOURCES) {
-    assert.ok(
-      signalUsage.includes(source.usageToken("<text>")),
-      `signalUsage must include source ${source.name}`,
-    );
-    assert.ok(
-      workingOnUsage.includes(source.usageToken("<what>")),
-      `workingOnUsage must include source ${source.name}`,
-    );
-    assert.ok(
-      conflictMsg.includes(source.conflictLabel),
-      `conflictMsg must include conflictLabel for ${source.name}: ${source.conflictLabel}`,
-    );
-    assert.ok(
-      missingMsg.includes(source.missingLabel),
-      `missingMsg must include missingLabel for ${source.name}: ${source.missingLabel}`,
-    );
-  }
+  // Contracted body sources must be present
+  assert.ok(
+    BODY_FLAGS.includes("body-file"),
+    "BODY_FLAGS must include contracted flag body-file",
+  );
+  assert.ok(
+    BODY_FLAGS.includes("body-stdin"),
+    "BODY_FLAGS must include contracted flag body-stdin",
+  );
+  assert.ok(
+    BODY_SOURCES.some((s) => s.name === "positional"),
+    "BODY_SOURCES must include contracted source positional",
+  );
 
-  // Verify usage() actually renders the generated synopses
-  assert.ok(helpText.includes(`cswarm note ${signalUsage}`));
-  assert.ok(helpText.includes(`cswarm ask ${signalUsage}`));
-  assert.ok(helpText.includes(`cswarm reply <signal-id> ${signalUsage}`));
-  assert.ok(helpText.includes(`cswarm working-on ${workingOnUsage}`));
-
-  // 4. Mutation control: if a source is added or removed without every message following, the gate must fail
-  function assertAllMessagesFollowSources(
-    sources: readonly typeof BODY_SOURCES[number][],
-    messages: {
-      signalUsage: string;
-      workingOnUsage: string;
-      conflictMsg: string;
-      missingMsg: string;
-    },
-  ): void {
-    for (const source of sources) {
-      if (!messages.signalUsage.includes(source.usageToken("<text>"))) {
-        throw new Error(`signalUsage does not follow source ${source.name}`);
-      }
-      if (!messages.workingOnUsage.includes(source.usageToken("<what>"))) {
-        throw new Error(`workingOnUsage does not follow source ${source.name}`);
-      }
-      if (!messages.conflictMsg.includes(source.conflictLabel)) {
-        throw new Error(`conflictMsg does not follow source ${source.name}`);
-      }
-      if (!messages.missingMsg.includes(source.missingLabel)) {
-        throw new Error(`missingMsg does not follow source ${source.name}`);
-      }
+  // 3. Parser runtime acceptance: accepts all declared body flags and rejects unknown body flags
+  for (const flag of BODY_FLAGS) {
+    const source = BODY_SOURCES.find((s) => s.kind === "flag" && s.flag === flag);
+    assert.ok(source, `every BODY_FLAG must correspond to a flag source entry`);
+    if (source.boolean) {
+      const parsed = new Arguments(["note", `--${flag}`]);
+      assert.equal(parsed.has(flag), true);
+    } else {
+      const parsed = new Arguments(["note", `--${flag}`, "test-val"]);
+      assert.equal(parsed.optional(flag), "test-val");
     }
   }
-
-  // Passing control with current sources and current messages
-  assert.doesNotThrow(() =>
-    assertAllMessagesFollowSources(BODY_SOURCES, {
-      signalUsage,
-      workingOnUsage,
-      conflictMsg,
-      missingMsg,
-    }),
-  );
-
-  // Failing control with a fake source added to sources but messages left behind
-  const fakeSource = {
-    name: "body-fake",
-    kind: "flag" as const,
-    flag: "body-fake",
-    conflictLabel: "--body-fake",
-    missingLabel: "--body-fake <path>",
-    usageToken: () => "--body-fake <path>",
-    isPresent: () => false,
-  };
   assert.throws(
-    () =>
-      assertAllMessagesFollowSources([...BODY_SOURCES, fakeSource], {
-        signalUsage,
-        workingOnUsage,
-        conflictMsg,
-        missingMsg,
-      }),
-    /does not follow source body-fake/,
-    "gate must fail when a source is added without all messages following",
+    () => new Arguments(["note", "--body-unknown-drift-check"]),
+    /unknown option --body-unknown-drift-check/,
   );
+
+  // 4. Runtime behavior: every entry in BODY_SOURCES has a wired reader and can supply a body end to end
+  const dir = await mkdtemp(resolve(tmpdir(), "cswarm-msgfmt-gate-"));
+  try {
+    for (const source of BODY_SOURCES) {
+      assert.equal(
+        typeof source.read,
+        "function",
+        `source ${source.name} must have a wired read function on its BODY_SOURCES entry`,
+      );
+
+      if (source.name === "positional") {
+        const args = new Arguments(["note", "gate positional body"]);
+        const body = await resolveSignalBody(args, 1, ["workspace-id", ...BODY_FLAGS]);
+        assert.equal(body, "gate positional body");
+      } else if (source.name === "body-file") {
+        const tmpFile = resolve(dir, "body-file.txt");
+        await writeFile(tmpFile, "gate file body\n");
+        const args = new Arguments(["note", "--body-file", tmpFile]);
+        const body = await resolveSignalBody(args, 1, ["workspace-id", ...BODY_FLAGS]);
+        assert.equal(body, "gate file body");
+      } else if (!source.usesStdin) {
+        // Any newly added non-stdin source must supply a valid non-empty body when invoked
+        const args = source.boolean
+          ? new Arguments(["note", `--${source.flag}`])
+          : new Arguments(["note", `--${source.flag}`, "test-input"]);
+        const body = await resolveSignalBody(args, 1, ["workspace-id", ...BODY_FLAGS]);
+        assert.ok(typeof body === "string" && body.length > 0);
+      }
+    }
+
+    // body-stdin supplies body end to end through the CLI process
+    let receivedStdinBody = "";
+    const server = createMockCloudServer((cmd) => {
+      receivedStdinBody = cmd.body;
+    });
+    await new Promise<void>((res, rej) => {
+      server.once("error", rej);
+      server.listen(0, "127.0.0.1", () => res());
+    });
+    const credPath = resolve(dir, "cred.json");
+    try {
+      await writeFile(credPath, ARTIFACT, { mode: 0o600 });
+      const port = (server.address() as { port: number }).port;
+      const target = [
+        "--url",
+        `http://127.0.0.1:${port}`,
+        "--anon-key",
+        "anon",
+        "--workspace-id",
+        WORKSPACE,
+        "--agent-token-file",
+        credPath,
+        "--json",
+      ];
+      const result = await runCli(["note", "--body-stdin", ...target], "gate stdin body\n");
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(receivedStdinBody, "gate stdin body");
+    } finally {
+      server.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+
+  // 5. Stdin exclusion check derives from BODY_SOURCES
+  for (const source of BODY_SOURCES.filter((s) => s.usesStdin && s.kind === "flag")) {
+    const conflictArgs = new Arguments([
+      "note",
+      `--${source.flag}`,
+      "--agent-token-stdin",
+    ]);
+    await assert.rejects(
+      () => resolveSignalBody(conflictArgs, 1, ["workspace-id", "agent-token-stdin", ...BODY_FLAGS]),
+      (err: any) => {
+        assert.equal(err.code, "body_stdin_token_stdin_conflict");
+        assert.ok(err.message.includes(source.conflictLabel));
+        return true;
+      },
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
