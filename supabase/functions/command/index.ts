@@ -8361,7 +8361,7 @@ async function handleTransaction(
         }
         const bucket = await incrementRateBucket(
           tx,
-          `file:create:${auth.credentialKind}:${rateIdentity}`,
+          `file:create:${auth.credentialKind}:${rateIdentity.toLowerCase()}`,
           FILE_CREATE_RATE_LIMIT_PER_HOUR,
         );
         if (bucket.count > FILE_CREATE_RATE_LIMIT_PER_HOUR) {
@@ -8384,12 +8384,13 @@ async function handleTransaction(
               message: `Upload refused: ${detail}.`,
               limit: FILE_CREATE_RATE_LIMIT_PER_HOUR,
               resets_at: bucket.resetsAt,
+              scope: "identity",
             },
           };
         }
         const wsBucket = await incrementRateBucket(
           tx,
-          `file:create:ws:${route.workspaceId}`,
+          `file:create:ws:${route.workspaceId.toLowerCase()}`,
           FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR,
         );
         if (wsBucket.count > FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR) {
@@ -8412,6 +8413,7 @@ async function handleTransaction(
               message: `Upload refused: ${detail}.`,
               limit: FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR,
               resets_at: wsBucket.resetsAt,
+              scope: "workspace",
             },
           };
         }

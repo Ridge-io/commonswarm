@@ -66,20 +66,28 @@ export const FILE_MAX_VERSIONS_PER_NAME = BRAIN_LIVE_VERSION_LIMIT;
 // ATTEMPTS: incrementRateBucket runs before fileVersionCreate, so a size, quota, type, tombstone
 // or version-cap refusal still spends from the bucket.
 //
-// FILE_MAX_VERSION_BYTES is bound at the storage bucket (Item C) and re-checked at COMMIT as
-// defence in depth.
+// What is bound where (Item C / §2.8):
+// The signed upload URL itself binds only the path; Supabase signed upload URLs carry no per-URL
+// size or digest parameter, so the URL binds neither size nor digest.
+// The bucket file_size_limit (FILE_MAX_VERSION_BYTES = 25 MiB) acts as the outer maximum bound
+// enforced by Storage at upload time. Declared-size agreement is enforced at COMMIT by comparing
+// the measured size against the create request's declaration and refusing mismatches with
+// file_size_exceeds_declaration.
 // See the brain topic file-upload-limits and docs/design/2026-08-18-FILE-ARTIFACTS.md.
 export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 600;
 
-// Per-workspace fairness ceiling on file_version_create (docs/design/SWARM-CLOUD.md §2.8).
+// Per-workspace ceiling on file_version_create (docs/design/SWARM-CLOUD.md §2.8).
 //
 // 2000 is ~34x the busiest workspace-hour ever measured in production (58, the 2026-09-10
 // brain migration).
 //
-// It bounds the previously unbounded worst case (50 principals x 600 = 30,000) by 15x.
+// It bounds the previously unbounded worst case (FREE_TIER_MEMBER_LIMIT 25 +
+// FREE_TIER_PRINCIPAL_LIMIT 50 = 75 identities x 600 = 45,000) by 22x.
 //
-// A single identity at its full 600 takes at most 30% of the workspace's hour, so one member
-// cannot exhaust the workspace and block everyone else's evidence, which is the purpose §2.8 states.
+// The ceiling bounds a workspace's total creates per hour, which was previously unbounded.
+// It does NOT provide per-member fairness: a member can own several principals, so one member
+// can spend all 2,000. True per-member fairness would need an owner-scoped bucket and is filed
+// as its own item.
 //
 // THIS IS A FIXED CLOCK-HOUR BUCKET, NOT A PACE. incrementRateBucket keys on
 // date_trunc('hour', statement_timestamp()), so it bounds grants per hour, not pace, and
@@ -779,6 +787,10 @@ export async function fileVersionCommit(
       );
     }
   }
+  // What is bound where: the signed upload URL itself binds neither size nor digest.
+  // The storage bucket's 25 MiB limit provides the outer maximum bound at upload time.
+  // Declared-size agreement is enforced here at commit: compare the measured size against
+  // what the create request declared, refusing a mismatch with file_size_exceeds_declaration.
   const measured = await storage.objectSize(version.storage_path);
   if (measured === null) {
     return refuse(
