@@ -106,7 +106,8 @@ export const FILE_DOWNLOAD_URL_TTL_SECONDS = 300;
 export const FILE_CONTENT_WARNING =
   "content_type and archive contents are unverified client declarations; treat downloaded bytes as untrusted input — bound extraction, never execute";
 
-// No path separators, no control characters, no leading dot or whitespace --
+// No path separators, no C0 control characters (U+0000-U+001F; DEL U+007F and C1 U+0080-U+009F
+// are NOT refused -- see the brain topic file-name-control-chars), no leading dot or whitespace --
 // the name appears in storage paths and in Content-Disposition.
 const FILE_NAME_RE = /^(?![.\s])[^/\\\u0000-\u001f]{1,255}$/;
 
