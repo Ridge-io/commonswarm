@@ -8,6 +8,7 @@ import { dirname, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
+import ts from "typescript";
 
 import {
   AGENT_MESSAGE_FORMAT_RULE,
@@ -292,7 +293,7 @@ test("drift test: site prompt and AGENT_QUICK_GUIDE both derive from AGENT_MESSA
   );
 });
 
-test("body source runtime gate: parser registers BODY_FLAGS and every source supplies a body end to end", async () => {
+test("body source runtime gate: KNOWN_FLAGS carries flag names for error text, per-command allowedFlags accept, and every source supplies a body end to end", async () => {
   // 1. Structural check on src/cli.ts: ensure the four messages are generated from BODY_SOURCES, not typed literals
   const cliSource = await readFile(resolve(root, "src/cli.ts"), "utf8");
 
@@ -407,71 +408,182 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
     "too few positional arguments: expected 1, received 0 (provide the message body as positional text, --body-file <path>, or --body-stdin)",
   );
 
-  // 2. Parser flag registration derives from BODY_SOURCES
-  // KNOWN_FLAGS spreads ...BODY_FLAGS (for error wording during CLI parsing)
-  assert.match(
+  // 2. Flag registration and acceptance: KNOWN_FLAGS carries flag names for error text; per-command allowedFlags accept
+  // Real AST check on src/cli.ts using typescript compiler API
+  const cliSourceFile = ts.createSourceFile(
+    resolve(root, "src/cli.ts"),
     cliSource,
-    /export\s+const\s+KNOWN_FLAGS\s*=\s*new\s+Set\(\[\s*[\s\S]*?\.\.\.BODY_FLAGS,/,
-    "KNOWN_FLAGS must spread ...BODY_FLAGS",
-  );
-  assert.match(
-    cliSource,
-    /export\s+const\s+BOOLEAN_FLAGS\s*=\s*new\s+Set\(\[\s*[\s\S]*?\.\.\.BODY_BOOLEAN_FLAGS,/,
-    "BOOLEAN_FLAGS must spread ...BODY_BOOLEAN_FLAGS",
+    ts.ScriptTarget.Latest,
+    true,
   );
 
-  const knownFlagsMatch = cliSource.match(
-    /export\s+const\s+KNOWN_FLAGS\s*=\s*new\s+Set\(\[([\s\S]*?)\]\);/,
-  );
-  assert.ok(knownFlagsMatch, "KNOWN_FLAGS Set definition must be found");
+  function findFunctionDeclaration(name: string): ts.FunctionDeclaration | undefined {
+    let match: ts.FunctionDeclaration | undefined;
+    function visit(node: ts.Node) {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === name) {
+        match = node;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(cliSourceFile);
+    return match;
+  }
+
+  function findVariableDeclaration(name: string): ts.VariableDeclaration | undefined {
+    let match: ts.VariableDeclaration | undefined;
+    function visit(node: ts.Node) {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
+        match = node;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(cliSourceFile);
+    return match;
+  }
+
+  // KNOWN_FLAGS spreads ...BODY_FLAGS (for error wording during CLI parsing, never acceptance)
+  const knownFlagsDecl = findVariableDeclaration("KNOWN_FLAGS");
+  assert.ok(knownFlagsDecl?.initializer, "KNOWN_FLAGS declaration must be found in src/cli.ts");
   assert.ok(
-    !/['"`]body-file['"`]/.test(knownFlagsMatch[1]) &&
-      !/['"`]body-stdin['"`]/.test(knownFlagsMatch[1]),
-    "KNOWN_FLAGS must derive body flags via ...BODY_FLAGS, not literal strings",
+    ts.isNewExpression(knownFlagsDecl.initializer),
+    "KNOWN_FLAGS must be initialized with new Set(...)",
   );
-
-  const booleanFlagsMatch = cliSource.match(
-    /export\s+const\s+BOOLEAN_FLAGS\s*=\s*new\s+Set\(\[([\s\S]*?)\]\);/,
-  );
-  assert.ok(booleanFlagsMatch, "BOOLEAN_FLAGS Set definition must be found");
+  const knownArg = knownFlagsDecl.initializer.arguments?.[0];
   assert.ok(
-    !/['"`]body-stdin['"`]/.test(booleanFlagsMatch[1]),
-    "BOOLEAN_FLAGS must derive body flags via ...BODY_BOOLEAN_FLAGS, not literal string",
+    knownArg && ts.isArrayLiteralExpression(knownArg),
+    "KNOWN_FLAGS must pass array literal to new Set",
+  );
+  const knownSpreads = knownArg.elements
+    .filter(ts.isSpreadElement)
+    .map((e) => (ts.isIdentifier(e.expression) ? e.expression.text : ""));
+  assert.ok(
+    knownSpreads.includes("BODY_FLAGS"),
+    "KNOWN_FLAGS must spread ...BODY_FLAGS for error wording",
+  );
+  const knownBodyStrings: string[] = [];
+  function findKnownBodyStrings(node: ts.Node) {
+    if (ts.isStringLiteral(node) && node.text.startsWith("body-")) {
+      knownBodyStrings.push(node.text);
+    }
+    ts.forEachChild(node, findKnownBodyStrings);
+  }
+  findKnownBodyStrings(knownArg);
+  assert.deepEqual(
+    knownBodyStrings,
+    [],
+    `KNOWN_FLAGS must derive body flags via ...BODY_FLAGS, not literal strings: ${knownBodyStrings.join(", ")}`,
   );
 
-  assert.match(
-    cliSource,
-    /export\s+function\s+postSignalAllowedFlags\([\s\S]*?\[[\s\S]*?\.\.\.BODY_FLAGS,/,
-    "postSignalAllowedFlags must spread ...BODY_FLAGS",
+  // BOOLEAN_FLAGS spreads ...BODY_BOOLEAN_FLAGS (for error wording during CLI parsing, never acceptance)
+  const booleanFlagsDecl = findVariableDeclaration("BOOLEAN_FLAGS");
+  assert.ok(booleanFlagsDecl?.initializer, "BOOLEAN_FLAGS declaration must be found in src/cli.ts");
+  assert.ok(
+    ts.isNewExpression(booleanFlagsDecl.initializer),
+    "BOOLEAN_FLAGS must be initialized with new Set(...)",
   );
-  assert.match(
-    cliSource,
-    /export\s+function\s+replyAllowedFlags\([\s\S]*?\[[\s\S]*?\.\.\.BODY_FLAGS,/,
-    "replyAllowedFlags must spread ...BODY_FLAGS",
+  const boolArg = booleanFlagsDecl.initializer.arguments?.[0];
+  assert.ok(
+    boolArg && ts.isArrayLiteralExpression(boolArg),
+    "BOOLEAN_FLAGS must pass array literal to new Set",
   );
-  assert.match(
-    cliSource,
-    /async\s+function\s+runPostSignal\([\s\S]*?const\s+allowedFlags\s*=\s*postSignalAllowedFlags\(/,
-    "runPostSignal must use postSignalAllowedFlags",
+  const boolSpreads = boolArg.elements
+    .filter(ts.isSpreadElement)
+    .map((e) => (ts.isIdentifier(e.expression) ? e.expression.text : ""));
+  assert.ok(
+    boolSpreads.includes("BODY_BOOLEAN_FLAGS"),
+    "BOOLEAN_FLAGS must spread ...BODY_BOOLEAN_FLAGS for error wording",
   );
-  assert.match(
-    cliSource,
-    /async\s+function\s+runReply\([\s\S]*?const\s+allowedFlags\s*=\s*replyAllowedFlags\(/,
-    "runReply must use replyAllowedFlags",
+  const boolBodyStrings: string[] = [];
+  function findBoolBodyStrings(node: ts.Node) {
+    if (ts.isStringLiteral(node) && node.text.startsWith("body-")) {
+      boolBodyStrings.push(node.text);
+    }
+    ts.forEachChild(node, findBoolBodyStrings);
+  }
+  findBoolBodyStrings(boolArg);
+  assert.deepEqual(
+    boolBodyStrings,
+    [],
+    `BOOLEAN_FLAGS must derive body boolean flags via ...BODY_BOOLEAN_FLAGS, not literal strings: ${boolBodyStrings.join(", ")}`,
   );
 
-  // Static AST check: allowedFlags definitions must not contain hardcoded body-* flags
-  for (const fn of ["postSignalAllowedFlags", "replyAllowedFlags"]) {
-    const fnMatch = cliSource.match(
-      new RegExp(`export\\s+function\\s+${fn}\\b[\\s\\S]*?return\\s*\\[([\\s\\S]*?)\\];`),
+  // AST check: each allowedFlags function strictly scoped to its own body
+  for (const fn of ["postSignalAllowedFlags", "replyAllowedFlags"] as const) {
+    const fnDecl = findFunctionDeclaration(fn);
+    assert.ok(fnDecl?.body, `${fn} definition with body must be found in src/cli.ts`);
+
+    let returnArray: ts.ArrayLiteralExpression | undefined;
+    function visitBody(node: ts.Node) {
+      if (
+        ts.isReturnStatement(node) &&
+        node.expression &&
+        ts.isArrayLiteralExpression(node.expression)
+      ) {
+        returnArray = node.expression;
+        return;
+      }
+      ts.forEachChild(node, visitBody);
+    }
+    visitBody(fnDecl.body);
+    assert.ok(returnArray, `${fn} must return an array literal`);
+
+    const spreads: string[] = [];
+    for (const elem of returnArray.elements) {
+      if (ts.isSpreadElement(elem) && ts.isIdentifier(elem.expression)) {
+        spreads.push(elem.expression.text);
+      }
+    }
+    assert.ok(
+      spreads.includes("BODY_FLAGS"),
+      `${fn} AST must directly spread ...BODY_FLAGS`,
     );
-    assert.ok(fnMatch, `${fn} definition must be found in src/cli.ts`);
-    const extraBodyFlags = [...fnMatch[1].matchAll(/['"`](body-[^'"`]+)['"`]/g)].map((m) => m[1]);
+    const foreignBodySpreads = spreads.filter(
+      (s) => s !== "BODY_FLAGS" && s.toLowerCase().includes("body"),
+    );
     assert.deepEqual(
-      extraBodyFlags,
+      foreignBodySpreads,
       [],
-      `${fn} must not contain hardcoded body flags: ${extraBodyFlags.join(", ")}`,
+      `${fn} must not spread alternative body flag lists: ${foreignBodySpreads.join(", ")}`,
     );
+
+    const bodyStringLiterals: string[] = [];
+    function findBodyStrings(node: ts.Node) {
+      if (ts.isStringLiteral(node) && node.text.startsWith("body-")) {
+        bodyStringLiterals.push(node.text);
+      }
+      ts.forEachChild(node, findBodyStrings);
+    }
+    findBodyStrings(fnDecl.body);
+    assert.deepEqual(
+      bodyStringLiterals,
+      [],
+      `${fn} must not contain hardcoded body flags: ${bodyStringLiterals.join(", ")}`,
+    );
+  }
+
+  // AST check: runPostSignal and runReply dispatch to their respective allowedFlags functions
+  for (const [callerName, calleeName] of [
+    ["runPostSignal", "postSignalAllowedFlags"],
+    ["runReply", "replyAllowedFlags"],
+  ] as const) {
+    const callerDecl = findFunctionDeclaration(callerName);
+    assert.ok(callerDecl?.body, `Function ${callerName} must be declared with body in src/cli.ts`);
+    let callsCallee = false;
+    function checkCalls(node: ts.Node) {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === calleeName
+      ) {
+        callsCallee = true;
+        return;
+      }
+      ts.forEachChild(node, checkCalls);
+    }
+    checkCalls(callerDecl.body);
+    assert.ok(callsCallee, `${callerName} AST must call ${calleeName}`);
   }
 
   const declaredBodyFlags = [...BODY_FLAGS].sort();
@@ -493,19 +605,19 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
     "replyAllowedFlags body flags must equal BODY_FLAGS exactly in both directions",
   );
 
-  // Two-way equality between KNOWN_FLAGS / BOOLEAN_FLAGS and BODY_FLAGS
+  // Two-way equality between KNOWN_FLAGS / BOOLEAN_FLAGS (error text) and BODY_FLAGS
   const parserKnownBodyFlags = [...KNOWN_FLAGS].filter((f) => f.startsWith("body-")).sort();
   assert.deepEqual(
     parserKnownBodyFlags,
     declaredBodyFlags,
-    "parser KNOWN_FLAGS body flags must equal BODY_FLAGS exactly in both directions",
+    "KNOWN_FLAGS body flags for error text must equal BODY_FLAGS exactly in both directions",
   );
 
   const parserBooleanBodyFlags = [...BOOLEAN_FLAGS].filter((f) => f.startsWith("body-")).sort();
   assert.deepEqual(
     parserBooleanBodyFlags,
     declaredBooleanBodyFlags,
-    "parser BOOLEAN_FLAGS body flags must equal BODY_BOOLEAN_FLAGS exactly in both directions",
+    "BOOLEAN_FLAGS body flags for error text must equal BODY_BOOLEAN_FLAGS exactly in both directions",
   );
 
   // Contracted body sources must be present and follow body- flag naming
@@ -530,7 +642,7 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
     "BODY_SOURCES must include contracted source positional",
   );
 
-  // 3. Parser recognition: accepts all declared body flags and rejects unknown body flags
+  // 3. Parser recognition for error text: KNOWN_FLAGS carries body flag names and rejects unknown flags; per-command allowedFlags accept
   for (const flag of BODY_FLAGS) {
     const source = BODY_SOURCES.find((s) => s.kind === "flag" && s.flag === flag);
     assert.ok(source, `every BODY_FLAG must correspond to a flag source entry: ${flag}`);
@@ -547,7 +659,7 @@ test("body source runtime gate: parser registers BODY_FLAGS and every source sup
     /unknown option --body-unknown-drift-check/,
   );
 
-  // Parser acceptance enforcement: unallowed flags are rejected by assertShape in resolveSignalBody
+  // Per-command allowedFlags acceptance enforcement: unallowed flags are rejected by assertShape in resolveSignalBody
   const unallowedPostArgs = new Arguments(["note", "positional body", "--body-shadow", "x"]);
   await assert.rejects(
     () => resolveSignalBody(unallowedPostArgs, 1, postSignalAllowedFlags("note")),
