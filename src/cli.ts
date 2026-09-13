@@ -1158,7 +1158,8 @@ export const STREAM_CHUNK_BYTE_LIMIT = 4096;
  * Preserves leading UTF-8 BOM (U+FEFF) as a character counted toward the cap.
  * Rejects invalid UTF-8 bytes with BodyEncodingError ("body_invalid_utf8").
  * Rejects oversized chunks and stream byte accumulation exceeding the theoretical
- * maximum byte length for (maxChars + 2) characters before decoding.
+ * maximum byte length for (maxChars + 2) characters before decoding and without
+ * appending to the accumulator.
  * Incoming chunks within byte limits are decoded in slices of at most
  * STREAM_CHUNK_BYTE_LIMIT (4096 bytes), checking character length bounds before
  * appending each slice so accumulated decoded text length never exceeds (maxChars + 2)
@@ -1166,7 +1167,7 @@ export const STREAM_CHUNK_BYTE_LIMIT = 4096;
  * and aborts immediately with BodyLengthError ("body_too_large") once the bound is exceeded.
  */
 export async function readBoundedUtf8Stream(
-  stream: AsyncIterable<Uint8Array | Buffer | string>,
+  stream: AsyncIterable<Uint8Array | Buffer>,
   maxChars: number,
   options: {
     source: "file" | "stdin";
@@ -1178,7 +1179,8 @@ export async function readBoundedUtf8Stream(
     try {
       options.destroy?.();
     } catch {
-      // Cleanup failures must never overwrite in-flight typed errors (D-053)
+      // Cleanup failures must never overwrite in-flight typed errors (D-053),
+      // nor fail a command whose bytes were already successfully read.
     }
   };
 
@@ -1192,9 +1194,9 @@ export async function readBoundedUtf8Stream(
 
   try {
     for await (const rawChunk of stream) {
-      const rawByteLength = typeof rawChunk === "string"
-        ? Buffer.byteLength(rawChunk, "utf8")
-        : rawChunk.byteLength;
+      // byteLength is read once into a local to prevent lying getters from bypassing bounds.
+      // Slicing uses the same validated rawByteLength bound rather than re-reading the property.
+      const rawByteLength = rawChunk.byteLength;
 
       if (rawByteLength > maxStreamBytes || totalBytes + rawByteLength > maxStreamBytes) {
         safeDestroy();
@@ -1207,14 +1209,12 @@ export async function readBoundedUtf8Stream(
 
       const chunk = Buffer.isBuffer(rawChunk)
         ? rawChunk
-        : typeof rawChunk === "string"
-        ? Buffer.from(rawChunk, "utf8")
-        : Buffer.from(rawChunk.buffer, rawChunk.byteOffset, rawChunk.byteLength);
+        : Buffer.from(rawChunk.buffer, rawChunk.byteOffset, rawByteLength);
 
-      for (let offset = 0; offset < chunk.byteLength; offset += STREAM_CHUNK_BYTE_LIMIT) {
+      for (let offset = 0; offset < rawByteLength; offset += STREAM_CHUNK_BYTE_LIMIT) {
         const slice = chunk.subarray(
           offset,
-          Math.min(offset + STREAM_CHUNK_BYTE_LIMIT, chunk.byteLength),
+          Math.min(offset + STREAM_CHUNK_BYTE_LIMIT, rawByteLength),
         );
 
         let textChunk: string;
@@ -1275,7 +1275,7 @@ export async function readBoundedUtf8Stream(
         `could not read --body-stdin: ${detail}`,
       );
     }
-    const errCode = (error as NodeJS.ErrnoException)?.code;
+    const errCode = (() => { try { return (error as NodeJS.ErrnoException)?.code; } catch { return undefined; } })();
     if (errCode === "ENOENT") {
       throw new BodyFileError(
         "body_file_missing",
@@ -1364,7 +1364,7 @@ export async function resolveSignalBody(
       ) {
         throw error;
       }
-      const code = (error as NodeJS.ErrnoException)?.code;
+      const code = (() => { try { return (error as NodeJS.ErrnoException)?.code; } catch { return undefined; } })();
       if (code === "ENOENT") {
         throw new BodyFileError(
           "body_file_missing",

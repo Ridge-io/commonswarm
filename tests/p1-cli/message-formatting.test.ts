@@ -1167,7 +1167,7 @@ test("stream bounds: oversized chunk is rejected before decoding and chunk slice
   let destroyed = false;
   // An arbitrary iterable yields a huge chunk of 100,000 bytes with invalid UTF-8 byte at index 0.
   // Because the chunk is oversized, it is rejected with body_too_large BEFORE TextDecoder is ever
-  // called, proving it is rejected before decoding or retaining rather than failing with body_invalid_utf8.
+  // called, proving it is rejected before decoding and without appending to the accumulator rather than failing with body_invalid_utf8.
   const hugeChunk = Buffer.alloc(100000, 0x61);
   hugeChunk[0] = 0xff;
   async function* hugeChunkStream() {
@@ -1215,6 +1215,32 @@ test("stream bounds: oversized chunk is rejected before decoding and chunk slice
       return true;
     },
   );
+});
+
+test("stream bounds: byteLength getter is read once into a local, preventing lying getter from bypassing bounds", async () => {
+  const typedArrayByteLength = Object.getOwnPropertyDescriptor(
+    Object.getPrototypeOf(Uint8Array.prototype),
+    "byteLength",
+  )!.get!;
+  class Liar extends Uint8Array {
+    reads = 0;
+    get byteLength() {
+      this.reads++;
+      return this.reads === 1 ? 1 : typedArrayByteLength.call(this);
+    }
+  }
+  const liar = new Liar(64 * 1024 * 1024);
+  liar.fill(0x61);
+
+  async function* liarStream() {
+    yield liar;
+  }
+
+  const result = await readBoundedUtf8Stream(liarStream(), SIGNAL_BODY_MAX, {
+    source: "stdin",
+  });
+  assert.equal(liar.reads, 1, "byteLength getter must be read exactly once");
+  assert.equal(result, "a");
 });
 
 test("cleanup safety: throwing destroy callback never erases typed errors or stable codes (D-053)", async () => {
@@ -1297,7 +1323,34 @@ test("cleanup safety: throwing destroy callback never erases typed errors or sta
     },
   );
 
-  // 5. Successful stream completes normally without throwing destroy failure
+  // 5. Hostile error with throwing code getter preserves typed BodyFileError and body_file_unreadable
+  const hostile = new Error("disk read failure");
+  Object.defineProperty(hostile, "code", {
+    get() { throw new Error("code getter escaped"); },
+  });
+  async function* hostileStream() {
+    throw hostile;
+  }
+  await assert.rejects(
+    async () => {
+      await readBoundedUtf8Stream(hostileStream(), SIGNAL_BODY_MAX, {
+        source: "file",
+        filePath: "/tmp/mock-signal.txt",
+        destroy: () => { throw new Error("destroy failed"); },
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof BodyFileError, "must be instance of BodyFileError");
+      assert.equal((err as BodyFileError).code, "body_file_unreadable");
+      assert.equal((err as BodyFileError).name, "BodyFileError");
+      assert.match((err as Error).message, /\[body_file_unreadable\] could not read --body-file \/tmp\/mock-signal\.txt: disk read failure/);
+      return true;
+    },
+  );
+});
+
+test("cleanup safety on success: failing destroy after successful read does not fail a command whose bytes were read", async () => {
+  // Bytes were read successfully; a failing destroy() callback must not fail a command that succeeded.
   async function* successfulStream() {
     yield Buffer.from("clean message body\n", "utf8");
   }
@@ -1306,6 +1359,24 @@ test("cleanup safety: throwing destroy callback never erases typed errors or sta
     destroy: () => { throw new Error("destroy failed"); },
   });
   assert.equal(body, "clean message body");
+});
+
+test("chunk type safety: string chunks are excluded so lone surrogates cannot bypass strict UTF-8 validation", async () => {
+  async function* stringStream() {
+    yield "\ud800" as unknown as Uint8Array;
+  }
+  await assert.rejects(
+    async () => {
+      await readBoundedUtf8Stream(stringStream(), SIGNAL_BODY_MAX, {
+        source: "stdin",
+      });
+    },
+    (err: unknown) => {
+      assert.ok(err instanceof BodyStdinError);
+      assert.equal((err as BodyStdinError).code, "body_stdin_unreadable");
+      return true;
+    },
+  );
 });
 
 test("stdin stream failure: throwing iterable is wrapped in typed BodyStdinError with stable code body_stdin_unreadable", async () => {
