@@ -33,7 +33,6 @@ import {
   BodyStdinConflictError,
   BodyStdinError,
   FORMAT_ADVISORY_FIELD,
-  FORMAT_ADVISORY_MESSAGE,
   KNOWN_FLAGS,
   SIGNAL_BODY_MAX,
   STREAM_CHUNK_BYTE_LIMIT,
@@ -197,7 +196,18 @@ test("stripSingleTrailingNewline: strips at most one trailing newline and preser
 });
 
 test("messageFormatAdvisory: emits advisory only for blobs and never throws", () => {
-  assert.equal(messageFormatAdvisory("x".repeat(500)), FORMAT_ADVISORY_MESSAGE);
+  const advisory = messageFormatAdvisory("x".repeat(500));
+  assert.ok(advisory !== null, "blob body must produce an advisory");
+  assert.match(
+    advisory,
+    /--body-file/,
+    "blob advisory must name --body-file literally",
+  );
+  assert.match(
+    advisory,
+    /no newlines.*wall of text/i,
+    "blob advisory must describe that body has no newlines and renders as a wall of text",
+  );
   assert.equal(messageFormatAdvisory("x".repeat(499)), null);
   assert.equal(messageFormatAdvisory("x".repeat(500) + "\n"), null);
   assert.equal(messageFormatAdvisory(""), null);
@@ -257,19 +267,47 @@ test("typed error classes: export codes and retain error hierarchies", () => {
 // ---------------------------------------------------------------------------
 
 test("drift test: site prompt and AGENT_QUICK_GUIDE both derive from AGENT_MESSAGE_FORMAT_RULE", async () => {
-  const sitePromptSource = await readFile(
-    resolve(root, "site/src/components/connect/agent-prompt.ts"),
-    "utf8",
+  const browserPromptModule = "../../site/src/components/connect/agent-prompt.js";
+  const { dashboardAgentFilePrompt, dashboardAgentPrompt } = await import(browserPromptModule);
+  const dummyInput = {
+    credential: {
+      principalId: "11111111-1111-4111-8111-111111111111",
+      principalName: "Observer",
+      tokenId: "22222222-2222-4222-8222-222222222222",
+      runId: "33333333-3333-4333-8333-333333333333",
+      token: "swm_agt_dummy",
+      expiresAt: Date.now() + 3600000,
+      renews: true,
+      horizonExpiresAt: null,
+      grantKind: "standing" as const,
+    },
+    workspaceId: "44444444-4444-4444-8444-444444444444",
+    workspaceName: "Observer room",
+    deploymentUrl: "https://example.supabase.co",
+    anonKey: "test_anon_key",
+  };
+
+  // Assert against the actual prompt strings the site builds at runtime
+  const filePrompt = dashboardAgentFilePrompt(dummyInput);
+  assert.ok(
+    filePrompt.includes(AGENT_MESSAGE_FORMAT_RULE),
+    "site prompt built by dashboardAgentFilePrompt must contain AGENT_MESSAGE_FORMAT_RULE",
   );
   assert.match(
-    sitePromptSource,
-    /import\s*\{[^}]*AGENT_MESSAGE_FORMAT_RULE[^}]*\}\s*from/,
-    "site agent-prompt.ts must import AGENT_MESSAGE_FORMAT_RULE",
+    filePrompt,
+    /--body-file/,
+    "site prompt built by dashboardAgentFilePrompt must mention --body-file",
+  );
+
+  const inlinePrompt = dashboardAgentPrompt(dummyInput);
+  assert.ok(
+    inlinePrompt.includes(AGENT_MESSAGE_FORMAT_RULE),
+    "site prompt built by dashboardAgentPrompt must contain AGENT_MESSAGE_FORMAT_RULE",
   );
   assert.match(
-    sitePromptSource,
-    /\$\{AGENT_MESSAGE_FORMAT_RULE\}/,
-    "site agent-prompt.ts must interpolate AGENT_MESSAGE_FORMAT_RULE into the prompt text",
+    inlinePrompt,
+    /--body-file/,
+    "site prompt built by dashboardAgentPrompt must mention --body-file",
   );
 
   const contractSource = await readFile(
@@ -417,6 +455,34 @@ test("body source runtime gate: KNOWN_FLAGS carries flag names for error text, p
     true,
   );
 
+  function forEachChildInSameFunction(parent: ts.Node, visitor: (node: ts.Node) => void) {
+    function walk(node: ts.Node) {
+      visitor(node);
+      if (
+        node !== parent &&
+        (ts.isFunctionDeclaration(node) ||
+          ts.isFunctionExpression(node) ||
+          ts.isArrowFunction(node) ||
+          ts.isMethodDeclaration(node) ||
+          ts.isClassDeclaration(node) ||
+          ts.isClassExpression(node))
+      ) {
+        return;
+      }
+      ts.forEachChild(node, walk);
+    }
+    ts.forEachChild(parent, walk);
+  }
+
+  function findTopLevelFunctionDeclaration(name: string): ts.FunctionDeclaration | undefined {
+    for (const statement of cliSourceFile.statements) {
+      if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) {
+        return statement;
+      }
+    }
+    return undefined;
+  }
+
   function findFunctionDeclaration(name: string): ts.FunctionDeclaration | undefined {
     let match: ts.FunctionDeclaration | undefined;
     function visit(node: ts.Node) {
@@ -509,53 +575,50 @@ test("body source runtime gate: KNOWN_FLAGS carries flag names for error text, p
     `BOOLEAN_FLAGS must derive body boolean flags via ...BODY_BOOLEAN_FLAGS, not literal strings: ${boolBodyStrings.join(", ")}`,
   );
 
-  // AST check: each allowedFlags function strictly scoped to its own body
+  // AST check: each allowedFlags function strictly scoped to its own body (not nested functions)
   for (const fn of ["postSignalAllowedFlags", "replyAllowedFlags"] as const) {
-    const fnDecl = findFunctionDeclaration(fn);
+    const fnDecl = findTopLevelFunctionDeclaration(fn);
     assert.ok(fnDecl?.body, `${fn} definition with body must be found in src/cli.ts`);
 
-    let returnArray: ts.ArrayLiteralExpression | undefined;
-    function visitBody(node: ts.Node) {
+    const returnArrays: ts.ArrayLiteralExpression[] = [];
+    forEachChildInSameFunction(fnDecl.body, (node) => {
       if (
         ts.isReturnStatement(node) &&
         node.expression &&
         ts.isArrayLiteralExpression(node.expression)
       ) {
-        returnArray = node.expression;
-        return;
+        returnArrays.push(node.expression);
       }
-      ts.forEachChild(node, visitBody);
-    }
-    visitBody(fnDecl.body);
-    assert.ok(returnArray, `${fn} must return an array literal`);
+    });
+    assert.ok(returnArrays.length > 0, `${fn} must return an array literal in its own body`);
 
-    const spreads: string[] = [];
-    for (const elem of returnArray.elements) {
-      if (ts.isSpreadElement(elem) && ts.isIdentifier(elem.expression)) {
-        spreads.push(elem.expression.text);
+    for (const returnArray of returnArrays) {
+      const spreads: string[] = [];
+      for (const elem of returnArray.elements) {
+        if (ts.isSpreadElement(elem) && ts.isIdentifier(elem.expression)) {
+          spreads.push(elem.expression.text);
+        }
       }
+      assert.ok(
+        spreads.includes("BODY_FLAGS"),
+        `${fn} AST must directly spread ...BODY_FLAGS in return array`,
+      );
+      const foreignBodySpreads = spreads.filter(
+        (s) => s !== "BODY_FLAGS" && s.toLowerCase().includes("body"),
+      );
+      assert.deepEqual(
+        foreignBodySpreads,
+        [],
+        `${fn} must not spread alternative body flag lists: ${foreignBodySpreads.join(", ")}`,
+      );
     }
-    assert.ok(
-      spreads.includes("BODY_FLAGS"),
-      `${fn} AST must directly spread ...BODY_FLAGS`,
-    );
-    const foreignBodySpreads = spreads.filter(
-      (s) => s !== "BODY_FLAGS" && s.toLowerCase().includes("body"),
-    );
-    assert.deepEqual(
-      foreignBodySpreads,
-      [],
-      `${fn} must not spread alternative body flag lists: ${foreignBodySpreads.join(", ")}`,
-    );
 
     const bodyStringLiterals: string[] = [];
-    function findBodyStrings(node: ts.Node) {
+    forEachChildInSameFunction(fnDecl.body, (node) => {
       if (ts.isStringLiteral(node) && node.text.startsWith("body-")) {
         bodyStringLiterals.push(node.text);
       }
-      ts.forEachChild(node, findBodyStrings);
-    }
-    findBodyStrings(fnDecl.body);
+    });
     assert.deepEqual(
       bodyStringLiterals,
       [],
@@ -564,26 +627,83 @@ test("body source runtime gate: KNOWN_FLAGS carries flag names for error text, p
   }
 
   // AST check: runPostSignal and runReply dispatch to their respective allowedFlags functions
+  // and pass the helper's RESULT to resolveSignalBody (proving data flow statically)
   for (const [callerName, calleeName] of [
     ["runPostSignal", "postSignalAllowedFlags"],
     ["runReply", "replyAllowedFlags"],
   ] as const) {
-    const callerDecl = findFunctionDeclaration(callerName);
+    const callerDecl = findTopLevelFunctionDeclaration(callerName);
     assert.ok(callerDecl?.body, `Function ${callerName} must be declared with body in src/cli.ts`);
-    let callsCallee = false;
-    function checkCalls(node: ts.Node) {
+
+    const resolveCalls: ts.CallExpression[] = [];
+    forEachChildInSameFunction(callerDecl.body, (node) => {
       if (
         ts.isCallExpression(node) &&
         ts.isIdentifier(node.expression) &&
-        node.expression.text === calleeName
+        node.expression.text === "resolveSignalBody"
       ) {
-        callsCallee = true;
-        return;
+        resolveCalls.push(node);
       }
-      ts.forEachChild(node, checkCalls);
+    });
+    assert.equal(
+      resolveCalls.length,
+      1,
+      `${callerName} must have exactly one call to resolveSignalBody in its own scope`,
+    );
+    const resolveCall = resolveCalls[0];
+    assert.ok(
+      resolveCall.arguments.length >= 3,
+      `${callerName} call to resolveSignalBody must pass at least 3 arguments (args, positionalIndex, allowedFlags)`,
+    );
+
+    const allowedFlagsArg = resolveCall.arguments[2];
+    let helperCallExpr: ts.CallExpression | undefined;
+
+    if (
+      ts.isCallExpression(allowedFlagsArg) &&
+      ts.isIdentifier(allowedFlagsArg.expression) &&
+      allowedFlagsArg.expression.text === calleeName
+    ) {
+      helperCallExpr = allowedFlagsArg;
+    } else if (ts.isIdentifier(allowedFlagsArg)) {
+      const varName = allowedFlagsArg.text;
+      let assignmentCount = 0;
+      forEachChildInSameFunction(callerDecl.body, (node) => {
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isIdentifier(node.name) &&
+          node.name.text === varName
+        ) {
+          assignmentCount++;
+          if (
+            node.initializer &&
+            ts.isCallExpression(node.initializer) &&
+            ts.isIdentifier(node.initializer.expression) &&
+            node.initializer.expression.text === calleeName
+          ) {
+            helperCallExpr = node.initializer;
+          }
+        }
+        if (
+          ts.isBinaryExpression(node) &&
+          node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isIdentifier(node.left) &&
+          node.left.text === varName
+        ) {
+          assignmentCount++;
+        }
+      });
+      assert.equal(
+        assignmentCount,
+        1,
+        `${varName} in ${callerName} must be initialized exactly once and never reassigned`,
+      );
     }
-    checkCalls(callerDecl.body);
-    assert.ok(callsCallee, `${callerName} AST must call ${calleeName}`);
+
+    assert.ok(
+      helperCallExpr,
+      `${callerName} must pass the result of ${calleeName}() to resolveSignalBody as allowedFlags`,
+    );
   }
 
   const declaredBodyFlags = [...BODY_FLAGS].sort();
@@ -1619,20 +1739,24 @@ test("advisory line on post receipt: emitted when body is blob, omitted when not
     // 1. Blob body in text mode -> advisory line present
     const resBlobText = await runCli(["note", blobText, ...target], AGENT_TOKEN);
     assert.equal(resBlobText.code, 0, resBlobText.stderr);
-    assert.match(resBlobText.stdout, new RegExp(FORMAT_ADVISORY_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(resBlobText.stdout, /--body-file/);
+    assert.match(resBlobText.stdout, /wall of text/i);
     assert.equal(postedBody, blobText, "client must send body unchanged");
 
     // 2. Blob body in --json mode -> format_advisory field present
     const resBlobJson = await runCli(["note", blobText, ...target, "--json"], AGENT_TOKEN);
     assert.equal(resBlobJson.code, 0, resBlobJson.stderr);
     const blobJsonParsed = JSON.parse(resBlobJson.stdout) as { format_advisory?: string; signal: { body: string } };
-    assert.equal(blobJsonParsed.format_advisory, FORMAT_ADVISORY_MESSAGE);
+    assert.ok(blobJsonParsed.format_advisory, "format_advisory field must be present for blob");
+    assert.match(blobJsonParsed.format_advisory, /--body-file/);
+    assert.match(blobJsonParsed.format_advisory, /wall of text/i);
     assert.equal(blobJsonParsed.signal.body, blobText);
 
     // 3. Normal body in text mode -> advisory line absent
     const resNormalText = await runCli(["note", normalText, ...target], AGENT_TOKEN);
     assert.equal(resNormalText.code, 0, resNormalText.stderr);
-    assert.doesNotMatch(resNormalText.stdout, new RegExp(FORMAT_ADVISORY_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(resNormalText.stdout, /--body-file/);
+    assert.doesNotMatch(resNormalText.stdout, /wall of text/i);
 
     // 4. Normal body in --json mode -> format_advisory omitted (not null)
     const resNormalJson = await runCli(["note", normalText, ...target, "--json"], AGENT_TOKEN);
@@ -1680,24 +1804,32 @@ test("all 4 verbs (note, ask, reply, working-on) support --body-file and format 
     const noteRes = await runCli(["note", "--body-file", blobFile, ...target], AGENT_TOKEN);
     assert.equal(noteRes.code, 0, noteRes.stderr);
     assert.equal(lastPostedKind, "note");
-    assert.equal(JSON.parse(noteRes.stdout).format_advisory, FORMAT_ADVISORY_MESSAGE);
+    const noteAdvisory = JSON.parse(noteRes.stdout).format_advisory;
+    assert.ok(noteAdvisory, "note must emit format_advisory for blob body");
+    assert.match(noteAdvisory, /--body-file/);
 
     // ask
     const askRes = await runCli(["ask", "--body-file", blobFile, ...target], AGENT_TOKEN);
     assert.equal(askRes.code, 0, askRes.stderr);
     assert.equal(lastPostedKind, "ask");
-    assert.equal(JSON.parse(askRes.stdout).format_advisory, FORMAT_ADVISORY_MESSAGE);
+    const askAdvisory = JSON.parse(askRes.stdout).format_advisory;
+    assert.ok(askAdvisory, "ask must emit format_advisory for blob body");
+    assert.match(askAdvisory, /--body-file/);
 
     // working-on
     const woRes = await runCli(["working-on", "--body-file", blobFile, ...target], AGENT_TOKEN);
     assert.equal(woRes.code, 0, woRes.stderr);
     assert.equal(lastPostedKind, "working-on");
-    assert.equal(JSON.parse(woRes.stdout).format_advisory, FORMAT_ADVISORY_MESSAGE);
+    const woAdvisory = JSON.parse(woRes.stdout).format_advisory;
+    assert.ok(woAdvisory, "working-on must emit format_advisory for blob body");
+    assert.match(woAdvisory, /--body-file/);
 
     // reply
     const replyRes = await runCli(["reply", SIGNAL_ID, "--body-file", blobFile, ...target], AGENT_TOKEN);
     assert.equal(replyRes.code, 0, replyRes.stderr);
-    assert.equal(JSON.parse(replyRes.stdout).format_advisory, FORMAT_ADVISORY_MESSAGE);
+    const replyAdvisory = JSON.parse(replyRes.stdout).format_advisory;
+    assert.ok(replyAdvisory, "reply must emit format_advisory for blob body");
+    assert.match(replyAdvisory, /--body-file/);
   } finally {
     server.close();
     await rm(dir, { recursive: true, force: true });
