@@ -579,7 +579,81 @@ class Arguments {
 const TARGET_FLAGS = ["url", "anon-key", "force-file-store"] as const;
 const ROUTE_FLAGS = ["workspace-id", "repo-mapping-id"] as const;
 const CREDENTIAL_FLAGS = ["agent-token-file", "agent-token-stdin"] as const;
-const BODY_FLAGS = ["body-file", "body-stdin"] as const;
+/**
+ * Body source definition. Exported so user-facing usage help, conflict errors,
+ * missing-source errors, and argument parsers all derive from one constant set.
+ */
+export interface BodySource {
+  readonly name: string;
+  readonly kind: "positional" | "flag";
+  readonly flag?: string;
+  readonly conflictLabel: string;
+  readonly missingLabel: string;
+  readonly usageToken: (positionalPlaceholder: string) => string;
+  readonly isPresent: (args: Arguments, positionalIndex: number) => boolean;
+}
+
+export const BODY_SOURCES: readonly BodySource[] = [
+  {
+    name: "positional",
+    kind: "positional",
+    conflictLabel: "positional text",
+    missingLabel: "positional text",
+    usageToken: (ph: string) => `"${ph}"`,
+    isPresent: (args: Arguments, positionalIndex: number) =>
+      args.positionals.length > positionalIndex,
+  },
+  {
+    name: "body-file",
+    kind: "flag",
+    flag: "body-file",
+    conflictLabel: "--body-file",
+    missingLabel: "--body-file <path>",
+    usageToken: () => "--body-file <path>",
+    isPresent: (args: Arguments) => args.optional("body-file") !== undefined,
+  },
+  {
+    name: "body-stdin",
+    kind: "flag",
+    flag: "body-stdin",
+    conflictLabel: "--body-stdin",
+    missingLabel: "--body-stdin",
+    usageToken: () => "--body-stdin",
+    isPresent: (args: Arguments) => args.has("body-stdin"),
+  },
+] as const;
+
+export const BODY_FLAGS: readonly string[] = BODY_SOURCES
+  .filter((s): s is BodySource & { flag: string } => s.kind === "flag" && typeof s.flag === "string")
+  .map((s) => s.flag);
+
+/** Format an item list with an Oxford comma and "or" conjunction. */
+export function formatOrList(items: readonly string[]): string {
+  if (items.length === 0) return "";
+  if (items.length === 1) return items[0]!;
+  if (items.length === 2) return `${items[0]} or ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, or ${items[items.length - 1]}`;
+}
+
+/** Formats the body usage synopsis entry from BODY_SOURCES. */
+export function formatBodyUsage(positionalPlaceholder: string): string {
+  return `(${BODY_SOURCES.map((s) => s.usageToken(positionalPlaceholder)).join(" | ")})`;
+}
+
+/** Formats the body source conflict error message. */
+export function formatBodySourceConflict(): string {
+  return `use exactly one body source: ${formatOrList(BODY_SOURCES.map((s) => s.conflictLabel))}`;
+}
+
+/** Formats the body source missing error message. */
+export function formatBodySourceMissing(
+  expectedPositionals: number,
+  receivedPositionals: number,
+): string {
+  const remedy = formatOrList(BODY_SOURCES.map((s) => s.missingLabel));
+  return `too few positional arguments: expected ${expectedPositionals}, received ${receivedPositionals} (provide the message body as ${remedy})`;
+}
+
 const SESSION_CONTEXT_FLAGS = ["session-context"] as const;
 const TASK_FLAGS = [
   "task-id",
@@ -608,8 +682,8 @@ class UsageError extends Error {}
 export function usage(): string {
   const agentCredential = "[--agent-token-file <path> | --agent-token-stdin]";
   const requiredAgentCredential = "(--agent-token-file <path> | --agent-token-stdin)";
-  const signalBody = '("<text>" | --body-file <path> | --body-stdin)';
-  const workingOnBody = '("<what>" | --body-file <path> | --body-stdin)';
+  const signalBody = formatBodyUsage("<text>");
+  const workingOnBody = formatBodyUsage("<what>");
   return `cswarm ${CLI_BUILD_VERSION} (protocol ${CLIENT_PROTOCOL_VERSION})
 
 Usage:
@@ -1314,7 +1388,6 @@ export async function resolveSignalBody(
 ): Promise<string> {
   const fromFile = args.optional("body-file");
   const fromStdin = args.has("body-stdin");
-  const hasPositional = args.positionals.length > positionalIndex;
 
   if (fromStdin && args.has("agent-token-stdin")) {
     throw new BodyStdinConflictError(
@@ -1323,25 +1396,28 @@ export async function resolveSignalBody(
     );
   }
 
-  let sourceCount = 0;
-  if (hasPositional) sourceCount++;
-  if (fromFile !== undefined) sourceCount++;
-  if (fromStdin) sourceCount++;
+  const activeSources = BODY_SOURCES.filter((source) =>
+    source.isPresent(args, positionalIndex),
+  );
+  const sourceCount = activeSources.length;
 
-  const expectedPositionals = (fromFile !== undefined || fromStdin)
+  const hasFlagSource = BODY_SOURCES.some(
+    (source) => source.kind === "flag" && source.isPresent(args, positionalIndex),
+  );
+  const expectedPositionals = hasFlagSource
     ? positionalIndex
     : positionalIndex + 1;
 
   if (sourceCount > 1) {
     throw new BodySourceConflictError(
       "body_source_conflict",
-      "use exactly one body source: positional text, --body-file, or --body-stdin",
+      formatBodySourceConflict(),
     );
   }
   if (sourceCount === 0) {
     throw new BodySourceMissingError(
       "body_source_missing",
-      `too few positional arguments: expected ${expectedPositionals}, received ${args.positionals.length} (provide the message body as positional text, --body-file <path>, or --body-stdin)`,
+      formatBodySourceMissing(expectedPositionals, args.positionals.length),
     );
   }
 

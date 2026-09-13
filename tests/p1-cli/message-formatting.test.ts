@@ -15,6 +15,8 @@ import {
   MESSAGE_BLOB_MIN_LENGTH,
 } from "../../src/cloud/agent-onboarding-contract.js";
 import {
+  BODY_FLAGS,
+  BODY_SOURCES,
   BodyEmptyError,
   BodyEncodingError,
   BodyFileError,
@@ -28,9 +30,14 @@ import {
   FORMAT_ADVISORY_MESSAGE,
   SIGNAL_BODY_MAX,
   STREAM_CHUNK_BYTE_LIMIT,
+  formatBodySourceConflict,
+  formatBodySourceMissing,
+  formatBodyUsage,
+  formatOrList,
   messageFormatAdvisory,
   readBoundedUtf8Stream,
   stripSingleTrailingNewline,
+  usage,
 } from "../../src/cli.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -265,6 +272,147 @@ test("drift test: site prompt and AGENT_QUICK_GUIDE both derive from AGENT_MESSA
     AGENT_QUICK_GUIDE,
     /--body-file/,
     "AGENT_QUICK_GUIDE must mention --body-file",
+  );
+});
+
+test("body source consistency gate: all four user-facing messages derive from BODY_SOURCES and fail if any source drifts", async () => {
+  // 1. Structural check on src/cli.ts: ensure the four messages are generated from BODY_SOURCES, not typed literals
+  const cliSource = await readFile(resolve(root, "src/cli.ts"), "utf8");
+
+  assert.match(
+    cliSource,
+    /const\s+signalBody\s*=\s*formatBodyUsage\(["']<text>["']\);/,
+    "src/cli.ts must generate signalBody using formatBodyUsage",
+  );
+  assert.match(
+    cliSource,
+    /const\s+workingOnBody\s*=\s*formatBodyUsage\(["']<what>["']\);/,
+    "src/cli.ts must generate workingOnBody using formatBodyUsage",
+  );
+  assert.match(
+    cliSource,
+    /throw\s+new\s+BodySourceConflictError\(\s*["']body_source_conflict["'],\s*formatBodySourceConflict\(\),?\s*\)/,
+    "src/cli.ts must generate BodySourceConflictError using formatBodySourceConflict",
+  );
+  assert.match(
+    cliSource,
+    /throw\s+new\s+BodySourceMissingError\(\s*["']body_source_missing["'],\s*formatBodySourceMissing\([^)]+\),?\s*\)/,
+    "src/cli.ts must generate BodySourceMissingError using formatBodySourceMissing",
+  );
+
+  // Negative control on src/cli.ts: old hardcoded strings must NOT be present
+  assert.ok(
+    !cliSource.includes('("<text>" | --body-file <path> | --body-stdin)'),
+    "src/cli.ts must not contain hardcoded signalBody usage string",
+  );
+  assert.ok(
+    !cliSource.includes('("<what>" | --body-file <path> | --body-stdin)'),
+    "src/cli.ts must not contain hardcoded workingOnBody usage string",
+  );
+  assert.ok(
+    !cliSource.includes('"use exactly one body source: positional text, --body-file, or --body-stdin"'),
+    "src/cli.ts must not contain hardcoded conflict message",
+  );
+
+  // 2. Exact match between BODY_FLAGS and BODY_SOURCES
+  const expectedBodyFlags = BODY_SOURCES
+    .filter((s) => s.kind === "flag")
+    .map((s) => s.flag);
+  assert.deepEqual(
+    [...BODY_FLAGS],
+    expectedBodyFlags,
+    "BODY_FLAGS must match flag sources declared in BODY_SOURCES",
+  );
+
+  // 3. Live surfaces must contain all sources declared in BODY_SOURCES
+  const helpText = usage();
+  const signalUsage = formatBodyUsage("<text>");
+  const workingOnUsage = formatBodyUsage("<what>");
+  const conflictMsg = formatBodySourceConflict();
+  const missingMsg = formatBodySourceMissing(1, 0);
+
+  // Verify all 4 message strings contain every source declared in BODY_SOURCES
+  for (const source of BODY_SOURCES) {
+    assert.ok(
+      signalUsage.includes(source.usageToken("<text>")),
+      `signalUsage must include source ${source.name}`,
+    );
+    assert.ok(
+      workingOnUsage.includes(source.usageToken("<what>")),
+      `workingOnUsage must include source ${source.name}`,
+    );
+    assert.ok(
+      conflictMsg.includes(source.conflictLabel),
+      `conflictMsg must include conflictLabel for ${source.name}: ${source.conflictLabel}`,
+    );
+    assert.ok(
+      missingMsg.includes(source.missingLabel),
+      `missingMsg must include missingLabel for ${source.name}: ${source.missingLabel}`,
+    );
+  }
+
+  // Verify usage() actually renders the generated synopses
+  assert.ok(helpText.includes(`cswarm note ${signalUsage}`));
+  assert.ok(helpText.includes(`cswarm ask ${signalUsage}`));
+  assert.ok(helpText.includes(`cswarm reply <signal-id> ${signalUsage}`));
+  assert.ok(helpText.includes(`cswarm working-on ${workingOnUsage}`));
+
+  // 4. Mutation control: if a source is added or removed without every message following, the gate must fail
+  function assertAllMessagesFollowSources(
+    sources: readonly typeof BODY_SOURCES[number][],
+    messages: {
+      signalUsage: string;
+      workingOnUsage: string;
+      conflictMsg: string;
+      missingMsg: string;
+    },
+  ): void {
+    for (const source of sources) {
+      if (!messages.signalUsage.includes(source.usageToken("<text>"))) {
+        throw new Error(`signalUsage does not follow source ${source.name}`);
+      }
+      if (!messages.workingOnUsage.includes(source.usageToken("<what>"))) {
+        throw new Error(`workingOnUsage does not follow source ${source.name}`);
+      }
+      if (!messages.conflictMsg.includes(source.conflictLabel)) {
+        throw new Error(`conflictMsg does not follow source ${source.name}`);
+      }
+      if (!messages.missingMsg.includes(source.missingLabel)) {
+        throw new Error(`missingMsg does not follow source ${source.name}`);
+      }
+    }
+  }
+
+  // Passing control with current sources and current messages
+  assert.doesNotThrow(() =>
+    assertAllMessagesFollowSources(BODY_SOURCES, {
+      signalUsage,
+      workingOnUsage,
+      conflictMsg,
+      missingMsg,
+    }),
+  );
+
+  // Failing control with a fake source added to sources but messages left behind
+  const fakeSource = {
+    name: "body-fake",
+    kind: "flag" as const,
+    flag: "body-fake",
+    conflictLabel: "--body-fake",
+    missingLabel: "--body-fake <path>",
+    usageToken: () => "--body-fake <path>",
+    isPresent: () => false,
+  };
+  assert.throws(
+    () =>
+      assertAllMessagesFollowSources([...BODY_SOURCES, fakeSource], {
+        signalUsage,
+        workingOnUsage,
+        conflictMsg,
+        missingMsg,
+      }),
+    /does not follow source body-fake/,
+    "gate must fail when a source is added without all messages following",
   );
 });
 

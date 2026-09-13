@@ -65,19 +65,19 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "identity client r6 C9 (explicit Claude executable path)",
     file: "src/cli.ts",
-    lines: [6012, 6012],
+    lines: [6088, 6088],
     contains: "(await loadHostClaude()).resolveClaudeExecutable",
   },
   {
     citedBy: "identity client r6 C9 (explicit Codex executable path)",
     file: "src/cli.ts",
-    lines: [6038, 6038],
+    lines: [6114, 6114],
     contains: "(await loadHostCodex()).resolveCodexExecutable",
   },
   {
     citedBy: "identity client r6 C9 (explicit OpenCode executable path)",
     file: "src/cli.ts",
-    lines: [6666, 6666],
+    lines: [6742, 6742],
     contains: "(await loadHostOpenCode()).resolveOpenCodeExecutable",
   },
   // site/src/lib/agent-connect.ts — mintedHorizon and the retired-constant note
