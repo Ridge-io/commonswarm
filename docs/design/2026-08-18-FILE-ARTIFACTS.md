@@ -217,6 +217,11 @@ command function (request size limits, memory, and double-handling):
    an hour of margin. The purge job also sweeps **orphan objects** — storage paths with
    no row, or whose row expired un-committed — on the same schedule.
 
+   *Measured, not inferred:* decoding a live production upload token on 2026-09-13 gave
+   `exp - iat` = 2 hours, so the two-hour window is confirmed against the running server and not
+   only against the pinned package's doc comment. The same decode showed exactly five payload
+   fields (`exp`, `iat`, `scope`, `upsert`, `url`), which is the §2.8 claim.
+
    *Retired pointer:* this paragraph cited `StorageFileApi.ts:345` until 2026-09-13. That line
    is the method summary; the two-hour sentence sits two lines below it, and nothing failed when
    they drifted apart. A line number into a pinned dependency is not a citation this repository
