@@ -1397,4 +1397,32 @@ test("a rate-limit refusal settles the ledger before it audits or refuses", () =
     !/NARROWING, not a cure/.test(index),
     "the retired over-cautious claim is back; the upsert serialises same-principal twins",
   );
+
+  /* The comment also says what happens for two DIFFERENT principals sharing a command id. An
+   * earlier version claimed they collide and get a 409; a Codex arm showed that is false,
+   * because the ledger is keyed by principal and neither can see the other's row. Bind the
+   * claim to the schema and to the lookup, so the corrected sentence cannot rot either. */
+  const schema = read("supabase/migrations/20260723000001_p1_schema.sql");
+  assert.match(
+    schema,
+    /CREATE TABLE IF NOT EXISTS swarm\.idempotency_keys \([\s\S]*?PRIMARY KEY \(principal_kind, principal_id, command_id\)/,
+    "swarm.idempotency_keys is no longer keyed by principal plus command id; the comment's independence claim depends on that key",
+  );
+  const lookup = /const ledgerRecheck = async[\s\S]*?LIMIT 1/.exec(index)?.[0];
+  assert.ok(lookup, "ledgerRecheck is no longer recognisable");
+  for (const column of ["principal_kind =", "principal_id =", "command_id ="]) {
+    assert.ok(
+      lookup!.includes(column),
+      `ledgerRecheck no longer filters on ${column}; two principals could then see each other's ledger rows`,
+    );
+  }
+  assert.match(
+    index,
+    /Two DIFFERENT principals that happen to pick the same command id are not twins at all/,
+    "the comment no longer explains the different-principal case",
+  );
+  assert.ok(
+    !/the recheck returns `conflict` and a 409/.test(index),
+    "the retired false claim about a cross-principal 409 is back",
+  );
 });

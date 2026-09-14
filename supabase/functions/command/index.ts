@@ -8358,10 +8358,14 @@ async function handleTransaction(
        * INSERT ... ON CONFLICT DO UPDATE on one row, and DO UPDATE holds a row lock to end of
        * transaction. Same-command twins share a principal, so they share the IDENTITY bucket
        * row charged first below: the second blocks there until the first commits, and its fresh
-       * recheck then sees the winner's ledger row under READ COMMITTED and replays it. Two
-       * principals colliding on one command id do not share that row, but they carry different
-       * request hashes, so the recheck returns `conflict` and a 409 — which is the correct
-       * answer, not a false refusal.
+       * recheck then sees the winner's ledger row under READ COMMITTED and replays it.
+       *
+       * Two DIFFERENT principals that happen to pick the same command id are not twins at all.
+       * swarm.idempotency_keys is PRIMARY KEY (principal_kind, principal_id, command_id) and
+       * ledgerRecheck filters on all three, so neither can see the other's row: they are two
+       * real commands that share a client-chosen string. If the workspace ceiling then refuses
+       * the second, that refusal is TRUE — the workspace is at its ceiling — and there is
+       * nothing for this guard to replay.
        *
        * An earlier version of this comment called the guard "a narrowing, not a cure" and a gate
        * pinned that wording. A Codex arm showed the claim was false: the upsert serialises them.
