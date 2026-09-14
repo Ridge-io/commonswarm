@@ -137,7 +137,14 @@ content type.
 - **archives** — extensions `.zip`, `.tar.gz`; types `application/zip`, `application/gzip`,
   `application/x-gzip`.
 
-Everything else — executables, scripts, dylibs, unknown binaries — is refused with the list.
+A name or declared type outside those groups is refused with the list.
+
+**This is a DECLARATION check, not content inspection.** Nothing reads the bytes. An executable
+named `plan.md` and declared `text/plain` is accepted, stored, and served — which is why
+`FILE_CONTENT_WARNING` ships on every download and list payload telling the reader to treat the
+bytes as untrusted input, bound extraction, and never execute. The allowlist keeps the OBVIOUS
+cases out and shapes what a browser will do with a download; it is not a malware control, and no
+sentence here should be read as one.
 
 The type is matched whole and anchored, so a media-type PARAMETER is refused: `text/plain` passes
 and `text/plain; charset=utf-8` does not, on every type and not only text. `validateFileCommand`

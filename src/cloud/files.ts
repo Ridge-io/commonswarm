@@ -32,7 +32,7 @@ export const FILE_CONTENT_WARNING =
 /*
  * §5 allowlist, keyed by extension because that is what a local path carries.
  * Every value must pass the server's ALLOWED_CONTENT_TYPE_RE
- * (file-artifacts.ts:178) — a mapping the server refuses is a lie to the user
+ * (file-artifacts.ts:179) — a mapping the server refuses is a lie to the user
  * that only fails after the create round-trip.
  */
 const CONTENT_TYPES: ReadonlyMap<string, string> = new Map([

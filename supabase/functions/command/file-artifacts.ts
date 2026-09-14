@@ -134,7 +134,8 @@ const FILE_NAME_RE = /^(?![.\s])[^/\\\u0000-\u001f]{1,255}$/;
 /* Printed verbatim in the refusal AND compiled into ALLOWED_CONTENT_TYPE_RE, so the message
  * cannot name a class the check does not enforce. Written as the character class rather than
  * `text/*`: the glob reads as "any text subtype" and the class excludes `_`, which is the
- * precision a review arm caught the shorthand losing. */
+ * precision a review arm caught the shorthand losing. Case is normalised before the check, so
+ * the class says nothing about it. */
 const TEXT_SUBTYPE_PATTERN = "text/[a-z0-9.+-]+";
 
 const ALLOWED_TYPE_GROUPS = [
@@ -199,11 +200,14 @@ export const ALLOWED_EXTENSION_RE = new RegExp(
 /**
  * The refusal a user reads when the name or the declared type is off the allowlist. Both
  * halves are generated from ALLOWED_TYPE_GROUPS, so neither can name a set the check does
- * not enforce. `text/*` is printed as a wildcard because ALLOWED_CONTENT_TYPE_RE takes any
- * subtype matching `[a-z0-9.+-]+`; every other accepted type is finite and is named in full.
+ * not enforce. The text entry is printed as the CLASS ITSELF — `text/[a-z0-9.+-]+` — not as
+ * `text/*`: the glob reads as "any text subtype" and the class is narrower, so the shorthand
+ * overclaimed. Every other accepted type is finite and is named in full.
  *
- * That class is NARROWER than "any text subtype": it is anchored and carries no `_`, so
- * `text/plain` passes while `text/plain; charset=utf-8` and `text/x_custom` are refused.
+ * The class is anchored and carries no `_`, so `text/plain` passes while
+ * `text/plain; charset=utf-8` and `text/x_custom` are refused. CASE is not part of it:
+ * `validateFileCommand` lowercases `content_type` before any check, so `TEXT/PLAIN` is accepted
+ * and the message says case does not matter.
  *
  * CASE IS NOT PART OF IT. `validateFileCommand` lowercases `content_type` before any check,
  * so `TEXT/PLAIN` is accepted on the real request path — measured on production. The regex

@@ -868,7 +868,7 @@ test("the file-artifacts design doc enumerates the same extension allowlist", ()
 });
 
 /* The refusal's own framing makes two claims beyond the lists: that the groups need not match,
- * and that `text/*` means a LOWERCASE subtype. Both are claims about behaviour, so both get a
+ * and that case does not matter. Both are claims about behaviour, so both get a
  * control — a true sentence with nothing holding it is how this paragraph drifted before. */
 test("the refusal's framing claims hold against fileContentAllowed", async () => {
   const edgeModule = "../../supabase/functions/command/file-artifacts.ts";
@@ -891,10 +891,12 @@ test("the refusal's framing claims hold against fileContentAllowed", async () =>
   assert.equal(fileContentAllowed("plan.png", "application/json"), true);
   assert.equal(fileContentAllowed("plan.md", "image/png"), true);
 
-  /* `text/*` is printed as a wildcard, so the message has to say how wide it really is. The
-   * regex class is [a-z0-9.+-]+ and the pattern is anchored, which is NARROWER than "any text
-   * subtype": no uppercase, no underscore, and no parameter. A Grok arm caught the earlier
-   * wording ("any lowercase text subtype") claiming the parameter case. */
+  /* The text entry is printed as the CLASS — `text/[a-z0-9.+-]+` — rather than as `text/*`,
+   * because the glob reads as "any text subtype" and the class is narrower: anchored, no
+   * underscore, no parameter. Case is NOT part of it; validateFileCommand lowercases
+   * content_type first, so TEXT/PLAIN is accepted. An earlier wording claimed the parameter
+   * case as "lowercase", which a Grok arm caught, and a Codex arm then caught this comment
+   * still describing the retired `text/*` spelling. */
   assert.match(
     FILE_TYPE_REFUSED_MESSAGE,
     /Send the content type bare: a parameter such as "; charset=utf-8" is refused/,
@@ -1190,4 +1192,64 @@ test("an upper-case extension is accepted on the path a user actually takes", as
   for (const name of ["Plan.EXE", "script.SH", "archive.TAR"]) {
     assert.equal(accepts(name, "text/plain"), false, `${name} is accepted; the extension allowlist is not being applied`);
   }
+});
+
+/* §5 used to end "Everything else — executables, scripts, dylibs, unknown binaries — is refused
+ * with the list", which reads as content inspection. Nothing reads the bytes: an executable
+ * named plan.md and declared text/plain is accepted, stored and served. A Codex arm called the
+ * overclaim. The honest version is bound here, together with the warning that carries it to
+ * every reader. */
+test("the spec says the allowlist is a declaration check, not content inspection", async () => {
+  const doc = read("docs/design/2026-08-18-FILE-ARTIFACTS.md");
+  const edgeModule = "../../supabase/functions/command/file-artifacts.ts";
+  const { fileContentAllowed, FILE_CONTENT_WARNING } = (await import(edgeModule)) as {
+    fileContentAllowed: (name: string, contentType: string) => boolean;
+    FILE_CONTENT_WARNING: string;
+  };
+
+  assert.match(
+    doc,
+    /This is a DECLARATION check, not content inspection/,
+    "the design doc no longer says the allowlist checks declarations rather than bytes",
+  );
+  assert.ok(
+    !/Everything else — executables, scripts, dylibs, unknown binaries — is refused with the list\./.test(doc),
+    "the retired sentence implying content inspection is back in the design doc",
+  );
+
+  /* The behaviour the sentence stands for: the check takes a NAME and a DECLARED type and
+   * nothing else, so a hostile payload under an allowed name passes. */
+  assert.equal(fileContentAllowed("plan.md", "text/plain"), true);
+  assert.equal(
+    fileContentAllowed("totally-an-executable.md", "text/plain"),
+    true,
+    "fileContentAllowed now inspects something beyond the name and declared type; the spec says it does not",
+  );
+
+  // The warning that carries this to every reader must still ship and still say it.
+  assert.match(FILE_CONTENT_WARNING, /unverified client declarations/);
+  assert.match(FILE_CONTENT_WARNING, /never execute/);
+});
+
+/* A policy page that publishes a "last updated" date is making a claim about itself. This lane
+ * changed the published caps and left the date at 12 September; a Codex arm caught it. Bind the
+ * date to the file's own content: if the sections change, the date has to move with them. */
+test("the acceptable-use page's updated date is not older than this lane's change", () => {
+  const page = read("site/src/pages/acceptable-use.astro");
+  const updated = /const UPDATED = "([^"]+)";/.exec(page)?.[1];
+  assert.ok(updated, "acceptable-use no longer declares an UPDATED date");
+
+  /* The caps sentence this lane rewrote is the newest change on the page, so the date must be
+   * at least the day it landed. */
+  assert.match(
+    page,
+    /1 GB per workspace counting live and retired versions plus uploads begun in the last 3 hours/,
+    "the rewritten caps sentence is gone; this date control no longer describes anything",
+  );
+  const parsed = Date.parse(`${updated} UTC`);
+  assert.ok(Number.isFinite(parsed), `UPDATED is not a parseable date: ${updated}`);
+  assert.ok(
+    parsed >= Date.parse("13 September 2026 UTC"),
+    `acceptable-use says it was updated ${updated}, but the caps it publishes were rewritten on 13 September 2026`,
+  );
 });
