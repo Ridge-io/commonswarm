@@ -4088,7 +4088,10 @@ async function readAgentProfile(path) {
   } catch {
     throw new AgentSetupError("profile_invalid", "The agent profile is damaged. Run setup again.");
   }
-  if (!p || p.version !== 1 || Object.keys(p).sort().join() !== ["version", "url", "anon_key", "workspace_id", "principal_id", "credential_file"].sort().join() || typeof p.url !== "string" || typeof p.anon_key !== "string" || typeof p.workspace_id !== "string" || !ONBOARDING_UUID.test(p.workspace_id) || typeof p.principal_id !== "string" || !ONBOARDING_UUID.test(p.principal_id) || p.credential_file !== (0, import_node_path4.join)((0, import_node_path4.dirname)(path), "credential.json")) {
+  const required2 = ["version", "url", "anon_key", "workspace_id", "principal_id", "credential_file"];
+  const keys = Object.keys(p ?? {}).sort().join();
+  const keysAccepted = keys === [...required2].sort().join() || keys === [...required2, "workspace_name"].sort().join();
+  if (!p || p.version !== 1 || !keysAccepted || p.workspace_name !== void 0 && (typeof p.workspace_name !== "string" || p.workspace_name.length > 200) || typeof p.url !== "string" || typeof p.anon_key !== "string" || typeof p.workspace_id !== "string" || !ONBOARDING_UUID.test(p.workspace_id) || typeof p.principal_id !== "string" || !ONBOARDING_UUID.test(p.principal_id) || p.credential_file !== (0, import_node_path4.join)((0, import_node_path4.dirname)(path), "credential.json")) {
     throw new AgentSetupError("profile_invalid", "The agent profile is damaged. Run setup again.");
   }
   checkedTarget2(p.url, p.anon_key);
@@ -4107,7 +4110,7 @@ async function openProfileCredential(profile, fetcher = fetch) {
   const store2 = await agentCredentialStore({ target: target2, lineageKey: credentialLineageKey(agent.token) });
   return AgentCredentialSession.open({ target: target2, workspaceId: profile.workspace_id, presented: agent, store: store2, fetcher });
 }
-async function saveAgentProfile(path, connection2) {
+async function saveAgentProfile(path, connection2, workspaceName) {
   path = await assertPrivateLocation(path);
   const profile = {
     version: 1,
@@ -4115,7 +4118,11 @@ async function saveAgentProfile(path, connection2) {
     anon_key: connection2.anon_key,
     workspace_id: connection2.workspace_id,
     principal_id: connection2.principal_id,
-    credential_file: (0, import_node_path4.join)((0, import_node_path4.dirname)(path), "credential.json")
+    credential_file: (0, import_node_path4.join)((0, import_node_path4.dirname)(path), "credential.json"),
+    /* Only when the server actually gave one. The key is omitted rather than written null, so
+     * a profile from a deployment that does not send the name keeps exactly the six keys every
+     * released client already accepts. */
+    ...workspaceName === void 0 ? {} : { workspace_name: workspaceName }
   };
   await withFileLock((0, import_node_path4.dirname)(path), "setup", async () => {
     const existingRaw = await readSecureJsonFileIfPresent(path, ONBOARDING_MAX_FILE_BYTES);
@@ -5760,11 +5767,16 @@ function parseAgentIdentity(value) {
   if (row.credential_valid !== true) {
     throw new Error("member read returned a malformed credential validity");
   }
+  const name = row.workspace_name;
+  if (name !== void 0 && name !== null && typeof name !== "string") {
+    throw new Error("member read returned a malformed workspace name");
+  }
   return {
     credential_valid: true,
     owner_user_id: checkedUuid2(row.owner_user_id, "identity owner_user_id"),
     principal_id: checkedUuid2(row.principal_id, "identity principal_id"),
-    workspace_id: checkedUuid2(row.workspace_id, "identity workspace_id")
+    workspace_id: checkedUuid2(row.workspace_id, "identity workspace_id"),
+    workspace_name: typeof name === "string" ? name : null
   };
 }
 async function readAgentSignalDirectory(target2, token, workspaceId2, fetcherOrOptions = fetch) {
@@ -6044,16 +6056,17 @@ function askReplyReadFailureMessage(workspaceId2, error2) {
   return `Your message was posted, but its reply could not be fetched (${failure.detail}). Do not resend this ask. Check with: cswarm inbox --workspace-id ${workspaceId2}`;
 }
 function renderSignals(signals, options) {
+  const heading = (base) => options.workspace === void 0 ? `${base}:` : `${base} \u2014 ${options.workspace.name === null ? options.workspace.id : `${options.workspace.name} (${options.workspace.id})`}:`;
   const feedScopeGuidance = "This feed shows broadcast signals only. It omits directed messages, including messages you sent. Read messages directed to you with: cswarm inbox";
   if (signals.length === 0) {
     return [
-      options.inbox ? "Inbox:" : "Recent broadcast signals:",
+      heading(options.inbox ? "Inbox" : "Recent broadcast signals"),
       options.inbox ? "Nothing is waiting for you." : options.includeStale ? "No broadcast signals have been shared in this workspace yet." : "No live broadcast signals in this workspace yet.",
       ...options.inbox ? [] : [feedScopeGuidance]
     ].join("\n");
   }
   const now = options.now ?? Date.now();
-  const lines = [options.inbox ? "Inbox:" : "Recent broadcast signals:"];
+  const lines = [heading(options.inbox ? "Inbox" : "Recent broadcast signals")];
   for (const signal of signals) {
     const authorKind = signal.from_kind === "agent" ? "agent" : "member";
     const authorName = signal.from_kind === "agent" ? options.authors?.agents.get(signal.from) : options.authors?.users.get(signal.from);
@@ -6623,11 +6636,14 @@ async function checkAgentMessages(options) {
         consumed += 1;
       }
       const hasMore = consumed < page.signals.length || page.rawCount >= AGENT_CHECK_PAGE_SIZE;
+      const rawName = directory.identity?.workspace_name;
       const result = {
         checked: true,
         cached: false,
         messages: messages2,
         has_more: hasMore,
+        workspace_id: profile.workspace_id,
+        workspace_name: rawName == null || rawName.trim() === "" ? null : rawName,
         next_action: hasMore ? `More messages may remain. Run cswarm check --profile ${shellQuote(profilePath)}${options.hostSessionId ? ` --host-session-id ${shellQuote(options.hostSessionId)}` : ""} again.` : null
       };
       if (signal.aborted) throw new AgentSetupError("check_timeout", "The message check timed out. Try again.");
@@ -50732,6 +50748,7 @@ __export(cli_exports, {
   readBoundedUtf8Stream: () => readBoundedUtf8Stream,
   renderListenerStatus: () => renderListenerStatus,
   renderRoster: () => renderRoster,
+  renderWorkspace: () => renderWorkspace,
   replyAllowedFlags: () => replyAllowedFlags,
   replyRefusalHint: () => replyRefusalHint,
   resolveDetachedClaudeExecutable: () => resolveDetachedClaudeExecutable,
@@ -50740,7 +50757,8 @@ __export(cli_exports, {
   resolveTurnBudgetOrDefer: () => resolveTurnBudgetOrDefer,
   stripSingleTrailingNewline: () => stripSingleTrailingNewline,
   threadReplyMessage: () => threadReplyMessage,
-  usage: () => usage
+  usage: () => usage,
+  workspaceLabel: () => workspaceLabel
 });
 module.exports = __toCommonJS(cli_exports);
 var import_node_crypto23 = require("node:crypto");
@@ -50838,11 +50856,15 @@ async function setupAgent(options) {
     if (!page.capabilities.cursorAfter) throw new AgentSetupError("check_paging_unsupported", "Update this deployment to support inbox paging before using quick setup.");
     return {
       name: directory.agents.find((a) => a.principal_id === connection2.principal_id)?.name,
+      /* The workspace's human name, from the directory read this already does. Item D: the
+       * agent and the person must call one workspace the same thing, and setup is where the
+       * agent first learns which workspace it is in. */
+      workspace_name: directory.identity?.workspace_name ?? null,
       inbox_pending: page.signals.length > 0,
       expires_at: session.expiry === null ? null : new Date(session.expiry).toISOString()
     };
   }, options.fetcher);
-  await saveAgentProfile(profilePath, connection2);
+  await saveAgentProfile(profilePath, connection2, identity.workspace_name ?? void 0);
   const receive = await readReceiveBinding(profilePath, options.hostSessionId);
   const wakeProviders = RECEIVE_WAKE_PROVIDERS.map((provider) => ({ provider, preview: provider === RECEIVE_WAKE_PROVIDER, requires_idle_test: true }));
   const primaryWakeProvider = wakeProviders.find((provider) => provider.provider === RECEIVE_WAKE_PROVIDER);
@@ -63697,8 +63719,8 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set([
 ]);
 var UUID_RE25 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function packageVersion() {
-  if ("0.1.70".length > 0) {
-    return "0.1.70";
+  if ("0.1.71".length > 0) {
+    return "0.1.71";
   }
   try {
     const value = JSON.parse(
@@ -65895,7 +65917,10 @@ async function signalAuthorLabels(cloud, selectedWorkspace, credential) {
           agent.principal_id,
           sanitizeDisplayLabel(agent.name, "Unnamed agent")
         ])
-      )
+      ),
+      /* Free: this directory read already happened for the author names, so naming the
+       * workspace in the inbox and feed headers costs no extra round trip. */
+      workspaceName: workspaceLabel(directory)
     };
   }
   const human = credential.human;
@@ -66361,8 +66386,20 @@ function describeAudience(signal, authors) {
   const name = signal.to_agent !== null ? authors.agents.get(signal.to_agent) : authors.users.get(recipientId);
   return `visible only to ${name === void 0 ? recipientId : `${name} (${recipientId})`}`;
 }
-function renderRoster(directory, memberNames) {
+function workspaceLabel(directory) {
+  const name = directory.identity?.workspace_name;
+  if (name == null || name.trim() === "") return null;
+  return sanitizeDisplayLabel(name, "Unnamed workspace");
+}
+function renderWorkspace(id, name) {
+  return name === null ? id : `${name} (${id})`;
+}
+function renderRoster(directory, memberNames, workspace) {
   const lines = [];
+  if (workspace !== void 0) {
+    lines.push(`Workspace: ${renderWorkspace(workspace.workspaceId, workspace.workspaceName)}`);
+    lines.push("");
+  }
   if (directory.members.length === 0 && directory.agents.length === 0) {
     return "This credential is not scoped to that workspace.\n\nThat is all this command can tell you: the answer is the same whether the workspace does\nnot exist or exists without you. Asking about a workspace must not reveal whether it is\nreal, so the two are deliberately indistinguishable.\n";
   }
@@ -66417,6 +66454,9 @@ async function runMembers(args) {
       `${JSON.stringify(
         {
           workspace_id: selected.selectedWorkspace,
+          /* The workspace's human name beside its id, so this roster and the app name one
+           * workspace the same way. null on an older deployment or an archived row. */
+          workspace_name: workspaceLabel(directory),
           members: directory.members.map((member) => ({
             user_id: member.user_id,
             name: memberNames.get(member.user_id) ?? null
@@ -66437,7 +66477,10 @@ async function runMembers(args) {
     );
     return;
   }
-  process.stdout.write(renderRoster(directory, memberNames));
+  process.stdout.write(renderRoster(directory, memberNames, {
+    workspaceId: selected.selectedWorkspace,
+    workspaceName: workspaceLabel(directory)
+  }));
 }
 async function runWhoami(args) {
   args.assertShape([
@@ -66498,11 +66541,13 @@ async function runWhoami(args) {
 `
     );
   }
+  const workspaceName = workspaceLabel(directory);
   const output2 = {
     credential_valid: identity.credential_valid,
     principal_id: identity.principal_id,
     display_name: displayName2,
     workspace_id: identity.workspace_id,
+    workspace_name: workspaceName,
     owner_user_id: identity.owner_user_id,
     owner_display_name: ownerName,
     credential_metadata_match: artifactMatches,
@@ -66517,7 +66562,7 @@ async function runWhoami(args) {
   process.stdout.write(
     `You are ${displayName2} (${identity.principal_id}).
 Credential valid now: yes.
-Workspace: ${identity.workspace_id}.
+Workspace: ${renderWorkspace(identity.workspace_id, workspaceName)}.
 Owner: ${ownerName} (${identity.owner_user_id}).
 ` + (output2.renewal_grant === null ? "Grant: no current renewal grant is visible. Next step: ask a workspace owner to mint a new credential.\n" : `${describeRenewalGrant(output2.renewal_grant).join("\n")}
 `)
@@ -66753,7 +66798,12 @@ async function runSignalRead(args, inbox) {
   process.stdout.write(`${renderSignals(rows3, {
     inbox,
     includeStale: args.has("include-stale"),
-    authors
+    authors,
+    /* Name the workspace in the header so a reader can tell this is the inbox they meant.
+     * Omitted on the human path, whose labels carry no name; the header then reads as before. */
+    ...authors.workspaceName === void 0 ? {} : {
+      workspace: { id: selected.selectedWorkspace, name: authors.workspaceName }
+    }
   })}
 `);
   if (selected.kind === "agent") {
@@ -70332,6 +70382,7 @@ ${usage()}
   readBoundedUtf8Stream,
   renderListenerStatus,
   renderRoster,
+  renderWorkspace,
   replyAllowedFlags,
   replyRefusalHint,
   resolveDetachedClaudeExecutable,
@@ -70340,5 +70391,6 @@ ${usage()}
   resolveTurnBudgetOrDefer,
   stripSingleTrailingNewline,
   threadReplyMessage,
-  usage
+  usage,
+  workspaceLabel
 });
