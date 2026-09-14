@@ -40,7 +40,8 @@ const directory = (name: unknown): SignalDirectory =>
 /* The CLI and the app must read the name from the SAME row. The app reads the
  * swarm_read.workspaces view; so must the edge that feeds every agent surface. Reaching past it
  * to swarm.workspaces is not a style question — measured 2026-09-14, it answered HTTP 500 for
- * every caller, because `authenticated` has no SELECT on that schema. */
+ * every caller. The handler runs as ROLE swarm_read, which has USAGE on the swarm schema but no
+ * SELECT on swarm.workspaces: `permission denied for table workspaces`. */
 test("the agent identity reads the workspace name from the view the app reads", () => {
   const edge = read("supabase/functions/read/index.ts");
   const block = /const workspaceRows = await tx<\{ name: string \}\[\]>`([\s\S]*?)`;/.exec(edge)?.[1];
@@ -50,9 +51,22 @@ test("the agent identity reads the workspace name from the view the app reads", 
     /FROM swarm_read\.workspaces/,
     "the read edge reads the workspace name from somewhere other than swarm_read.workspaces, which is the view the app reads",
   );
+  /* Pin the WHERE too. Control on FROM alone leaves the predicate free: a Grok arm noted that
+   * switching to body.workspace_id would still pass. The early-return on a mismatched
+   * workspace_id stops a leak today, but a control that does not mention the predicate is not
+   * a control over it. The id must come from the AUTHENTICATED context, never the request. */
+  assert.match(
+    block!,
+    /WHERE workspace_id = \$\{agent\.principal_workspace_id\}::uuid/,
+    "the workspace-name query no longer scopes to the authenticated principal's own workspace",
+  );
+  assert.ok(
+    !/\$\{body\.workspace_id\}/.test(block!),
+    "the workspace-name query takes its id from the request body instead of the authenticated context",
+  );
   assert.ok(
     !/FROM swarm\.workspaces/.test(block!),
-    "the read edge reaches past the view to the base table; authenticated has no SELECT on the swarm schema and this answered HTTP 500 on production",
+    "the read edge reaches past the view to the base table; the handler runs as role swarm_read, which cannot SELECT swarm.workspaces, and this answered HTTP 500 on production",
   );
 
   const app = read("site/src/lib/commonswarm.ts");
@@ -63,10 +77,15 @@ test("the agent identity reads the workspace name from the view the app reads", 
   );
 });
 
-/* ONE renderer, so `Name (id)` cannot become `Name [id]` on one surface and `Name - id` on
- * another. The human `status` verb has printed `Workspace: <name> (<id>)` since before this
- * item; the agent surfaces were the half that printed nothing, and they must match it. */
-test("every surface renders a named workspace the same way", () => {
+/* ONE renderer for the CLI, so `Name (id)` cannot become `Name [id]` on one surface and
+ * `Name - id` on another. The human `status` verb has printed `Workspace: <name> (<id>)` since
+ * before this item; the agent surfaces were the half that printed nothing, and they must match.
+ *
+ * The APP does NOT share this renderer and cannot: it builds its own DOM in the browser and
+ * imports nothing from src/cli.ts. Its half of the agreement is the separate switcher control
+ * below, and the shared SOURCE — both read swarm_read.workspaces. Saying "one renderer serves
+ * the app" would be false, and a review arm caught that wording. */
+test("every CLI surface renders a named workspace the same way", () => {
   assert.equal(
     renderWorkspace("4f63d2b0-8d95-4ea3-b46a-ac573cebc432", "CommonSwarm Build"),
     "CommonSwarm Build (4f63d2b0-8d95-4ea3-b46a-ac573cebc432)",
@@ -98,6 +117,9 @@ test("an unknown workspace name degrades to the id, never to a guess", () => {
     "4f63d2b0-8d95-4ea3-b46a-ac573cebc432",
   );
   assert.equal(workspaceLabel(directory("CommonSwarm Build")), "CommonSwarm Build");
+  /* A present but blank name is UNKNOWN, not a manufactured label. */
+  assert.equal(workspaceLabel(directory("")), null);
+  assert.equal(workspaceLabel(directory("   ")), null);
 });
 
 /* The profile file caches the name. It must stay OPTIONAL: the parser compares the key set
@@ -125,7 +147,10 @@ test("the app's workspace switcher shows the id beside the name", () => {
    * first version allowed 900 characters and a comment added here pushed the real span to
    * 1,010, so the control failed for its own reason rather than the code's. A lazy match to the
    * next `button.append` is bounded by the structure itself. */
-  const block = /const label = document\.createElement\("span"\);[\s\S]*?button\.append\(label, check\)/
+  /* Anchor on the SWITCHER, not on the first `createElement("span")` in the file — that one is
+   * the members list. A Grok arm noted the old start-anchor was not unique and worked only
+   * because the id lines happen to exist nowhere else today. */
+  const block = /dashboard__workspace-button[\s\S]*?button\.append\(label, check\)/
     .exec(dashboard)?.[0];
   assert.ok(block, "the workspace switcher's option rendering is no longer recognisable");
   assert.match(block!, /identifier\.textContent = workspace\.id/, "the switcher no longer shows the workspace id");

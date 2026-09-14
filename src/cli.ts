@@ -3450,6 +3450,9 @@ async function signalAuthorLabels(
           sanitizeDisplayLabel(agent.name, "Unnamed agent"),
         ]),
       ),
+      /* Free: this directory read already happened for the author names, so naming the
+       * workspace in the inbox and feed headers costs no extra round trip. */
+      workspaceName: workspaceLabel(directory),
     };
   }
   const human = credential.human!;
@@ -4125,7 +4128,12 @@ export function describeAudience(
  */
 export function workspaceLabel(directory: SignalDirectory): string | null {
   const name = directory.identity?.workspace_name;
-  return name == null ? null : sanitizeDisplayLabel(name, "Unnamed workspace");
+  /* A blank or whitespace-only name is UNKNOWN, not "Unnamed workspace". Passing it through
+   * sanitizeDisplayLabel would manufacture a label the server never sent, which is the same
+   * defect as inventing one for null — just harder to see. A Grok arm caught this path.
+   * Unknown renders the id alone, which is always true. */
+  if (name == null || name.trim() === "") return null;
+  return sanitizeDisplayLabel(name, "Unnamed workspace");
 }
 
 /** `Name (id)` when the name is known, the bare id when it is not. */
@@ -4656,6 +4664,11 @@ async function runSignalRead(
     inbox,
     includeStale: args.has("include-stale"),
     authors,
+    /* Name the workspace in the header so a reader can tell this is the inbox they meant.
+     * Omitted on the human path, whose labels carry no name; the header then reads as before. */
+    ...(authors.workspaceName === undefined ? {} : {
+      workspace: { id: selected.selectedWorkspace, name: authors.workspaceName },
+    }),
   })}\n`);
   if (selected.kind === "agent") {
     await reportRenderedBroadcasts(

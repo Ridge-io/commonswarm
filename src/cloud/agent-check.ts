@@ -38,6 +38,14 @@ export interface AgentCheckResult {
   messages: AgentCheckMessage[];
   has_more: boolean;
   next_action: string | null;
+  /**
+   * WHICH workspace was checked, by id and by the name a person uses. Item D: `check` is the
+   * verb an agent runs every turn, so it is the surface most likely to be the only thing in a
+   * transcript naming the workspace. `workspace_name` is null when the deployment does not send
+   * one; the id is always present.
+   */
+  workspace_id: string;
+  workspace_name: string | null;
 }
 
 interface CheckState {
@@ -173,8 +181,13 @@ export async function checkAgentMessages(options: {
         consumed += 1;
       }
       const hasMore = consumed < page.signals.length || page.rawCount >= AGENT_CHECK_PAGE_SIZE;
+      /* Blank is UNKNOWN, not a manufactured label — the same rule workspaceLabel() applies
+       * in the CLI. Null renders as the id alone, which is always true. */
+      const rawName = directory.identity?.workspace_name;
       const result: AgentCheckResult = {
         checked: true, cached: false, messages, has_more: hasMore,
+        workspace_id: profile.workspace_id,
+        workspace_name: rawName == null || rawName.trim() === "" ? null : rawName,
         next_action: hasMore ? `More messages may remain. Run cswarm check --profile ${shellQuote(profilePath)}${options.hostSessionId ? ` --host-session-id ${shellQuote(options.hostSessionId)}` : ""} again.` : null,
       };
       if (signal.aborted) throw new AgentSetupError("check_timeout", "The message check timed out. Try again.");

@@ -1650,6 +1650,12 @@ export interface SignalStatusSupplement {
 }
 
 export interface SignalAuthorLabels {
+  /**
+   * The workspace's human name, when the caller had it in hand. Optional: the human path
+   * builds these labels from a workspace status that does not carry it, and a header without a
+   * name is exactly what shipped before item D.
+   */
+  workspaceName?: string | null;
   users: ReadonlyMap<string, string>;
   agents: ReadonlyMap<string, string>;
   currentUserId?: string;
@@ -1833,13 +1839,29 @@ export function renderSignals(
     includeStale: boolean;
     now?: number;
     authors?: SignalAuthorLabels;
+    /**
+     * WHICH workspace these signals are from. Item D: a reader looking at an inbox needs to
+     * know it is the inbox they meant. Omitted by callers that have no workspace in hand, and
+     * the header then reads exactly as it did before.
+     */
+    workspace?: { id: string; name: string | null };
   },
 ): string {
+  /* `Inbox:` -> `Inbox — Name (id):`, or `Inbox — id:` when the name is unknown. One shape,
+   * matching what whoami, the members roster and human status print. */
+  const heading = (base: string): string =>
+    options.workspace === undefined
+      ? `${base}:`
+      : `${base} — ${
+        options.workspace.name === null
+          ? options.workspace.id
+          : `${options.workspace.name} (${options.workspace.id})`
+      }:`;
   const feedScopeGuidance =
     "This feed shows broadcast signals only. It omits directed messages, including messages you sent. Read messages directed to you with: cswarm inbox";
   if (signals.length === 0) {
     return [
-      options.inbox ? "Inbox:" : "Recent broadcast signals:",
+      heading(options.inbox ? "Inbox" : "Recent broadcast signals"),
       options.inbox
         ? "Nothing is waiting for you."
         : options.includeStale
@@ -1849,7 +1871,7 @@ export function renderSignals(
     ].join("\n");
   }
   const now = options.now ?? Date.now();
-  const lines = [options.inbox ? "Inbox:" : "Recent broadcast signals:"];
+  const lines = [heading(options.inbox ? "Inbox" : "Recent broadcast signals")];
   for (const signal of signals) {
     const authorKind = signal.from_kind === "agent" ? "agent" : "member";
     const authorName = signal.from_kind === "agent"
