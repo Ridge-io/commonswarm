@@ -8406,7 +8406,7 @@ async function handleTransaction(
         if (bucket.count > FILE_CREATE_RATE_LIMIT_PER_HOUR) {
           const detail =
             `file identity limit ${FILE_CREATE_RATE_LIMIT_PER_HOUR} uploads/hour; resets at ${bucket.resetsAt}`;
-          /* Decide BEFORE auditing. swarm.audit_events is append-only, so writing
+          /* Decide BEFORE auditing. swarm.audit_log is append-only, so writing
            * outcome: "rate_limit" and then returning a 200 replay leaves a permanent row
            * saying this command was refused when it was not. */
           const settled = await settledAnswer();
@@ -8440,7 +8440,7 @@ async function handleTransaction(
         if (wsBucket.count > FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR) {
           const detail =
             `file workspace limit ${FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR} uploads/hour; resets at ${wsBucket.resetsAt}`;
-          /* Decide BEFORE auditing. swarm.audit_events is append-only, so writing
+          /* Decide BEFORE auditing. swarm.audit_log is append-only, so writing
            * outcome: "rate_limit" and then returning a 200 replay leaves a permanent row
            * saying this command was refused when it was not. */
           const settled = await settledAnswer();

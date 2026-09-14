@@ -1361,7 +1361,7 @@ test("a rate-limit refusal settles the ledger before it audits or refuses", () =
     "settledAnswer no longer separates a conflicting command id from a replay",
   );
 
-  /* ORDER IS THE POINT. swarm.audit_events is append-only, so a rate_limit row written before
+  /* ORDER IS THE POINT. swarm.audit_log is append-only, so a rate_limit row written before
    * the replay decision is a permanent record of a refusal that did not happen. A Codex arm
    * caught the first version of this fix auditing first. Require the decision to come first in
    * BOTH branches — the identity bucket has carried this shape since the 600/hour cap shipped. */
@@ -1424,5 +1424,17 @@ test("a rate-limit refusal settles the ledger before it audits or refuses", () =
   assert.ok(
     !/the recheck returns `conflict` and a 409/.test(index),
     "the retired false claim about a cross-principal 409 is back",
+  );
+
+  /* The comment names the audit table. It said swarm.audit_events, which does not exist — a
+   * Grok arm caught an invented name. Bind it to the migration that creates the real one. */
+  assert.ok(
+    !/audit_events/.test(index),
+    "a comment names swarm.audit_events; the table is swarm.audit_log",
+  );
+  assert.match(
+    schema,
+    /CREATE TABLE IF NOT EXISTS swarm\.audit_log \(/,
+    "swarm.audit_log is no longer the audit table these comments name",
   );
 });
