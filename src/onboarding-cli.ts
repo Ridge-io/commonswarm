@@ -21,7 +21,7 @@ export interface OnboardingArguments {
   assertShape(flags: readonly string[], positionals: number): void;
 }
 
-export const ONBOARDING_VALUE_FLAGS = ["connection-file", "profile", "message-id"] as const;
+export const ONBOARDING_VALUE_FLAGS = ["connection-file", "profile", "message-id", "grok-bot-agent-id", "signal-id", "receipt"] as const;
 export const ONBOARDING_BOOLEAN_FLAGS = ["check-version", "hook", "full", "preview-channel"] as const;
 
 export function onboardingUsage(): string {
@@ -29,16 +29,18 @@ export function onboardingUsage(): string {
   cswarm setup --check-version
   cswarm setup guide
   cswarm check --profile <absolute-path> [--host-session-id <id>] [--force] [--full | --message-id <uuid>] [--json]
-  cswarm receive configure --profile <absolute-path> --mode ${RECEIVE_MODES.join("|")} [--provider ${RECEIVE_PROVIDERS.join("|")}] [--host-session-id <id>] [--cwd <path>] [--preview-channel] [--json]
+  cswarm receive configure --profile <absolute-path> --mode ${RECEIVE_MODES.join("|")} [--provider ${RECEIVE_PROVIDERS.join("|")}] [--host-session-id <id>] [--cwd <path>] [--preview-channel] [--grok-bot-agent-id <uuid>] [--json]
   cswarm receive status --profile <absolute-path> [--host-session-id <id>] [--json]
   cswarm receive test --profile <absolute-path> --host-session-id <id> [--json]
+  cswarm receive confirm --profile <absolute-path> --host-session-id <id> --signal-id <uuid> --receipt <receipt> [--json]
+  cswarm receive idle --profile <absolute-path> --host-session-id <id> [--json]
   cswarm receive serve --profile <absolute-path> --host-session-id <id>
 
 setup imports a private connection file and checks the authenticated identity. It starts no listener.
 check reads new directed messages without a listener; --force also performs a fresh read (there is no cooldown).
 --message-id reads the full body from the bounded local preview cache. Fetching does not ACK a delivery.
 receive configure records the user's choice. Host hooks require the current session ID; inherited host variables are not trusted.
-Wake uses a Claude Code preview channel in this same session. It remains unverified until an idle canary is received.
+Wake uses a Claude Code preview channel or the local Grok Bot gateway in this same session. It remains unverified until an idle canary is received.
 Turn mode uses a scoped host hook or a saved instruction. No background process renews credentials in turn mode.
 Agent commands also accept --profile instead of repeated credential and connection flags.`;
 }
@@ -142,10 +144,11 @@ export async function runOnboardingCommand(args: OnboardingArguments): Promise<b
     const action = args.positionals[1];
     const common = ["profile", "host-session-id", "json"];
     if (action === "configure") {
-      args.assertShape([...common, "mode", "provider", "cwd", "preview-channel"], 2);
+      args.assertShape([...common, "mode", "provider", "cwd", "preview-channel", "grok-bot-agent-id"], 2);
       await output(await configureAgentReceive({
         profilePath: args.required("profile"), mode: args.required("mode"), provider: args.optional("provider"),
         hostSessionId: args.optional("host-session-id"), cwd: args.optional("cwd"), previewChannel: args.has("preview-channel"),
+        grokBotAgentId: args.optional("grok-bot-agent-id"),
         execution: { command: process.execPath, args: [...process.execArgv, resolve(process.argv[1]!)] },
       }));
     } else if (action === "status") {
@@ -154,10 +157,23 @@ export async function runOnboardingCommand(args: OnboardingArguments): Promise<b
     } else if (action === "test") {
       args.assertShape(common, 2);
       await output(await requestReceiveCanary(args.required("profile"), checkedHostSessionId(args.required("host-session-id"))));
+    } else if (action === "confirm") {
+      args.assertShape([...common, "signal-id", "receipt"], 2);
+      const { confirmAgentChannel } = await import("./cloud/agent-channel.js");
+      await output(await confirmAgentChannel({ profilePath: args.required("profile"), hostSessionId: checkedHostSessionId(args.required("host-session-id")), signalId: args.required("signal-id"), receipt: args.required("receipt") }));
+    } else if (action === "idle") {
+      args.assertShape(common, 2);
+      const { markGrokBotIdle } = await import("./cloud/agent-channel-grok-bot.js");
+      await output(await markGrokBotIdle(args.required("profile"), checkedHostSessionId(args.required("host-session-id"))));
     } else if (action === "serve") {
       args.assertShape(["profile", "host-session-id"], 2);
       const { serveAgentChannel } = await import("./cloud/agent-channel.js");
-      await serveAgentChannel({ profilePath: args.required("profile"), hostSessionId: checkedHostSessionId(args.required("host-session-id")) });
+      const options = { profilePath: args.required("profile"), hostSessionId: checkedHostSessionId(args.required("host-session-id")) };
+      const binding = await readReceiveBinding(options.profilePath, options.hostSessionId);
+      if (binding?.provider === "grok-bot") {
+        const { serveGrokBotChannel } = await import("./cloud/agent-channel-grok-bot.js");
+        await serveGrokBotChannel(options);
+      } else await serveAgentChannel(options);
     } else throw new AgentSetupError("receive_command_invalid", "Run cswarm --help for receive commands.");
     return true;
   }
