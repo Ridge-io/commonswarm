@@ -657,7 +657,8 @@ test("every content type the refusal names is accepted, and the set matches the 
   // Behavioural half: a named type on an allowed extension must be accepted. `.md` is in the
   // text group, so the extension never decides these cases.
   for (const contentType of named) {
-    const probe = contentType === "text/*" ? "text/markdown" : contentType;
+    // The text entry is a CLASS, not a literal: probe a member of it. Everything else is literal.
+    const probe = contentType.startsWith("text/[") ? "text/markdown" : contentType;
     assert.equal(
       fileContentAllowed("plan.md", probe),
       true,
@@ -683,27 +684,29 @@ test("every content type the refusal names is accepted, and the set matches the 
     );
   }
 
-  // Set half: everything the regex source enumerates must be named. This is what catches a type
-  // that is accepted and unnamed — the direction the behavioural loop above cannot see.
-  const source = /const ALLOWED_CONTENT_TYPE_RE =\s*\n?\s*\/\^(.+)\$\/;/.exec(edge)?.[1];
-  assert.ok(source, "ALLOWED_CONTENT_TYPE_RE is no longer a literal regex in file-artifacts.ts");
-  const enumerated = ["application", "image"].flatMap((prefix) => {
-    const opener = `${prefix}\\/(`;
-    const at = source!.indexOf(opener);
-    assert.ok(at >= 0, `ALLOWED_CONTENT_TYPE_RE no longer has a ${prefix}/ group`);
-    const body = balancedGroup(source!, at + opener.length - 1);
-    return expandAlternation(body).map((leaf) => `${prefix}/${leaf}`);
-  });
+  // Set half: everything the COMPILED regex accepts must be named. ALLOWED_CONTENT_TYPE_RE is
+  // generated from the same list, so this direction is now structural rather than a comparison
+  // of two hand-maintained sets — but it still catches an entry that compiles to something
+  // wider than it reads.
+  const { ALLOWED_CONTENT_TYPE_RE } = (await import(edgeModule)) as {
+    ALLOWED_CONTENT_TYPE_RE: RegExp;
+  };
+  const source = /^\^\(\?:(.+)\)\$$/.exec(ALLOWED_CONTENT_TYPE_RE.source)?.[1];
+  assert.ok(source, `ALLOWED_CONTENT_TYPE_RE is no longer the generated alternation: ${ALLOWED_CONTENT_TYPE_RE.source}`);
+  const enumerated = source!
+    .split("|")
+    .map((alternative) => unescapeLiteral(alternative))
+    .filter((entry) => !entry.startsWith("text/["));
   assert.ok(
     enumerated.length >= 12,
     `could not enumerate ALLOWED_CONTENT_TYPE_RE: parsed ${enumerated.length} from ${source}`,
   );
   assert.ok(
-    /text\\\/\[a-z0-9\.\+-\]\+/.test(source!),
-    "ALLOWED_CONTENT_TYPE_RE no longer accepts every text/ subtype; the refusal still prints text/*",
+    source!.split("|").some((alternative) => unescapeLiteral(alternative) === "text/[a-z0-9.+-]+"),
+    `ALLOWED_CONTENT_TYPE_RE no longer carries the text/ subtype class it prints: ${source}`,
   );
 
-  const namedLeaves = new Set(named.filter((entry) => entry !== "text/*"));
+  const namedLeaves = new Set(named.filter((entry) => !entry.startsWith("text/[")));
   for (const contentType of enumerated) {
     assert.ok(
       namedLeaves.has(contentType),
@@ -955,4 +958,50 @@ test("the refusal survives the CLI's own truncation with every group intact", as
     .filter((entry) => entry !== "TEXT_SUBTYPE_WILDCARD")) {
     assert.ok(rendered.includes(contentType), `${contentType} is cut off before the user sees it`);
   }
+});
+
+/* ALLOWED_CONTENT_TYPE_RE stopped being a hand-written literal and is now compiled from
+ * ALLOWED_TYPE_GROUPS, which removes the second hand-maintained set a review arm objected to.
+ * A generated security control has to prove it did not move: this pins it against the exact
+ * literal it replaced, kept here verbatim, over every accepted type and a set of near misses
+ * chosen to catch an unescaped metacharacter (`svg+xml`, the dotted openxmlformats names, a
+ * trailing newline, an empty string). */
+const CONTENT_TYPE_RE_BEFORE_GENERATION =
+  /^(text\/[a-z0-9.+-]+|application\/(pdf|json|x-yaml|yaml|zip|gzip|x-gzip|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation))|image\/(png|jpeg|gif|webp|svg\+xml))$/;
+
+test("the generated content-type regex accepts and refuses exactly what the literal did", async () => {
+  const edgeModule = "../../supabase/functions/command/file-artifacts.ts";
+  const { ALLOWED_CONTENT_TYPE_RE } = (await import(edgeModule)) as {
+    ALLOWED_CONTENT_TYPE_RE: RegExp;
+  };
+
+  const cases = [
+    "text/plain", "text/markdown", "text/csv", "text/html", "text/x-yaml", "text/vnd.curl",
+    "text/a", "text/0", "text/a.b+c-d", "text/x_custom", "TEXT/plain", "text/", "text",
+    "text/plain; charset=utf-8", "text/plain;charset=utf-8", "text/plain ",
+    "application/json", "application/yaml", "application/x-yaml", "application/pdf",
+    "application/zip", "application/gzip", "application/x-gzip",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.drawingml.chart",
+    "application/vnd.openxmlformats-officedocumentXwordprocessingml.document",
+    "application/octet-stream", "application/xml", "application/x-sh", "application/",
+    "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml",
+    "image/svgWxml", "image/tiff", "image/", "video/mp4", "", "/", "x",
+    "application/jsonX", "Xapplication/json", "\napplication/json", "application/json\n",
+  ];
+
+  for (const value of cases) {
+    assert.equal(
+      ALLOWED_CONTENT_TYPE_RE.test(value),
+      CONTENT_TYPE_RE_BEFORE_GENERATION.test(value),
+      `generating ALLOWED_CONTENT_TYPE_RE changed the ruling for ${JSON.stringify(value)}`,
+    );
+  }
+
+  // Positive controls on the same invocation: the differential can discriminate.
+  assert.equal(CONTENT_TYPE_RE_BEFORE_GENERATION.test("text/plain"), true);
+  assert.equal(CONTENT_TYPE_RE_BEFORE_GENERATION.test("application/octet-stream"), false);
+  assert.ok(cases.length >= 40, `the differential shrank to ${cases.length} cases`);
 });

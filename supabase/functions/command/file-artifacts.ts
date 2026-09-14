@@ -113,8 +113,7 @@ export const FILE_CONTENT_WARNING =
 const FILE_NAME_RE = /^(?![.\s])[^/\\\u0000-\u001f]{1,255}$/;
 
 // §5 allowlist: declared content type AND filename extension check together.
-const ALLOWED_CONTENT_TYPE_RE =
-  /^(text\/[a-z0-9.+-]+|application\/(pdf|json|x-yaml|yaml|zip|gzip|x-gzip|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation))|image\/(png|jpeg|gif|webp|svg\+xml))$/;
+// Both regexes are generated from ALLOWED_TYPE_GROUPS below, so there is ONE source.
 
 /**
  * The allowlist, grouped, so the refusal a user reads is BUILT from the same source the
@@ -130,14 +129,18 @@ const ALLOWED_CONTENT_TYPE_RE =
  * regex's own source and probe fileContentAllowed with every named type and with near
  * misses.
  */
-const TEXT_SUBTYPE_WILDCARD = "text/*";
+/* Printed verbatim in the refusal AND compiled into ALLOWED_CONTENT_TYPE_RE, so the message
+ * cannot name a class the check does not enforce. Written as the character class rather than
+ * `text/*`: the glob reads as "any text subtype" and the class excludes `_`, which is the
+ * precision a review arm caught the shorthand losing. */
+const TEXT_SUBTYPE_PATTERN = "text/[a-z0-9.+-]+";
 
 const ALLOWED_TYPE_GROUPS = [
   {
     label: "text",
     extensions: ["md", "txt", "csv", "html", "htm", "json", "yaml", "yml"],
     contentTypes: [
-      TEXT_SUBTYPE_WILDCARD,
+      TEXT_SUBTYPE_PATTERN,
       "application/json",
       "application/yaml",
       "application/x-yaml",
@@ -164,6 +167,23 @@ const ALLOWED_TYPE_GROUPS = [
     contentTypes: ["application/zip", "application/gzip", "application/x-gzip"],
   },
 ] as const;
+
+/* The content-type allowlist, compiled from the same list the refusal prints. Every entry is a
+ * LITERAL except TEXT_SUBTYPE_PATTERN, which is the one genuine wildcard; literals are fully
+ * escaped so no entry can widen the pattern by accident. A differential control in
+ * tests/p1-cli/file-create-rate-limit.test.ts pins this against the hand-written regex it
+ * replaced, across every accepted type and a set of near misses. */
+export const ALLOWED_CONTENT_TYPE_RE = new RegExp(
+  `^(?:${
+    ALLOWED_TYPE_GROUPS.flatMap((group) => group.contentTypes)
+      .map((entry) =>
+        entry === TEXT_SUBTYPE_PATTERN
+          ? entry.replace("/", "\\/")
+          : entry.replace(/[.+*?^${}()|[\]\\/]/g, "\\$&")
+      )
+      .join("|")
+  })$`,
+);
 
 export const ALLOWED_EXTENSION_RE = new RegExp(
   `\\.(?:${
