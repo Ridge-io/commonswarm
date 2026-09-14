@@ -16,42 +16,44 @@ Done means, per the Strategist: both caps enforced server-side, each with a posi
 negative control **on production**, released on npm, edges deployed, acceptable-use updated,
 and one reply when it is in production.
 
-## STATE: written and gated, NOT released, NOT deployed
+## STATE: RELEASED AND IN PRODUCTION (2026-09-14)
 
-**The original defect is LIVE in production right now.** Measured 2026-09-13: the production
-`file_type_refused` message still reads `text (.md .txt .csv .json .yaml)` and omits `.html`,
-`.htm` and `.yml`, which the service accepts. A user uploading those is refused by a message
-calling them disallowed.
+Shipped as **0.1.70**. `main` = `a0f26195`, tag `v0.1.70` on that exact commit, npm `latest` =
+0.1.70 with the registry shasum equal to the committed pack
+(`7df037f0c51a7fe06320f88eda2bf9c181e7bf1b`).
 
-- Branch `lane/upload-ceilings`, tip **3517fd1**, worktree `scratchpad/wt-itemc`.
-- Merged `origin/main` (Grok Bot same-session wake, PRs #10 and #11) at `c1b330c`.
-- Version bumped to **0.1.70**.
-- All gates 0 with `site/dist` rebuilt first: `npm test`, `test:p1-cli`, `check:tests`,
-  `check:edge`, site build, site test, `git diff --check`. 38 focused controls in
-  `tests/p1-cli/file-create-rate-limit.test.ts`.
-- Release artifacts pre-flighted: `scripts/build-release.sh` and `scripts/build-npm.sh` both
-  exit 0 and verify by RUNNING the artifact; `npm publish --dry-run` stages
-  `commonswarm@0.1.70`, 546.9 kB, 4 files.
+### The production controls, paired
 
-## ⚠️ 0.1.69 exists on main and was NEVER released
+| control | before the migration | after |
+|---|---|---|
+| declare 1,024 bytes, PUT 30 MiB to the signed upload path | **HTTP 200**, Storage kept the bytes | **HTTP 413 EntityTooLarge** |
+| normal 59-byte upload, create -> PUT -> commit | — | **200, commit accepted** |
 
-PR #11 bumped `package.json` to 0.1.69 at 00:39Z on 2026-09-14. There is **no npm publish, no
-`v0.1.69` tag, no GitHub release**. CSwarmStrategist ruled: absorb it, ship 0.1.70 carrying both.
-**Do not publish 0.1.69** — it would move npm `latest` backwards past 0.1.70. Full note in the
-brain topic `releases`.
+The negative proves the bucket `file_size_limit` binds a signed PUT — the thing a review arm
+correctly said nobody had established. The positive proves uploading still works, so the negative
+is not measuring a broken uploader.
 
-## Measured on production (do not re-derive)
+### The user-visible fix, read back from production
 
-- Declare 1,024 bytes, PUT 30 MiB to the signed upload path → **HTTP 200**. The commit of that
-  version is then refused: "the uploaded object is 31457280 bytes; the version declared 1024".
-  So Storage keeps the bytes today and only the commit stops them going live. **That is the hole
-  the migration closes, and it is the BEFORE half of the control.**
-- `text/plain` accepted, `TEXT/PLAIN` accepted (`validateFileCommand` lowercases),
-  `text/plain; charset=utf-8` refused, `text/x_custom` refused.
-- A live upload token's payload has exactly the five fields §2.8 claims — `exp`, `iat`, `scope`,
-  `upsert`, `url` — with `scope` = "upload", `upsert` = false, `exp - iat` = 2 hours.
+Asking the deployed `command` edge to refuse a bad name now returns a message naming `.html`,
+`.htm`, `.yml` AND the archives group. The old typed sentence (`text (.md .txt .csv .json
+.yaml)`) is gone. The **shipped 0.1.70 CLI's own local refusal** — the list a user meets FIRST,
+which is a different hand-typed map — lists all twenty extensions too.
 
-## Next steps, in order
+### Site
+
+Verified on commonswarm.com with a cache-buster and paired present/absent controls: `/download`
+advertises 0.1.70; acceptable-use carries "1 GB per workspace counting live and retired versions",
+both hourly caps, and "Last updated 13 September 2026"; it does NOT carry "1 GB of unpurged
+versions" or "12 September 2026"; `install.sh` 200 against a `nope.sh` 404 control; no
+service_role JWT on `/start`.
+
+### Both binaries
+
+`~/.local/bin/cswarm` (installer) and `/opt/homebrew/bin/cswarm` (npm global) both report
+0.1.70. These are separate copies and have diverged before.
+
+## Next steps — DONE, recorded for the pattern
 
 Runbook: `scratchpad/RELEASE-0.1.70-RUNBOOK.md` (session scratchpad; reproduce from here if gone).
 
@@ -72,6 +74,17 @@ Runbook: `scratchpad/RELEASE-0.1.70-RUNBOOK.md` (session scratchpad; reproduce f
    versions" and "Last updated 13 September 2026", and must NOT contain "1 GB of unpurged
    versions".
 9. Artifacts commit with the registry shasum as control; ONE reply to CSwarmStrategist.
+
+## Traps this release hit, for the next person
+
+- **`gh release create` piped into `tail` reported exit 0 while the release FAILED.** It hit an
+  HTTP 422 on an asset upload and rolled the whole release back — no tag, no release, nothing to
+  clean up. `$?` after a pipe is the pipe's status. The repo already records this class; it was
+  re-learned here. Re-run reading `gh`'s own exit code, then verify three things separately: the
+  tag sits on the pushed tip, BOTH assets are attached (the installer refuses without
+  `cswarm.sha256`), and `gh release list` shows Latest.
+- **`git branch -d` refused a branch that WAS fully contained.** `git cherry main <branch>` gave
+  0 and `git merge-base --is-ancestor` said yes. Establish containment by those two, then `-D`.
 
 ## Not established
 
