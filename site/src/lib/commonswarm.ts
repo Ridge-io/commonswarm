@@ -1077,7 +1077,11 @@ export function prepareBrowserAttachments(
   return files.map((file) => {
     if (file.size < 1) throw new Error(`${file.name || "This file"} is empty.`);
     if (file.size > BROWSER_ATTACHMENT_MAX_BYTES) {
-      throw new Error(`${file.name || "This file"} is larger than the 25 MB file limit.`);
+      throw new Error(
+        `${file.name || "This file"} is larger than the ${
+          BROWSER_ATTACHMENT_MAX_BYTES / 1024 / 1024
+        } MB file limit.`,
+      );
     }
     if (file.name.length < 1 || file.name.length > 255) {
       throw new Error("Each attached file needs a name of 1 to 255 characters.");

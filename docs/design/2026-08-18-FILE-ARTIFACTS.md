@@ -1,6 +1,6 @@
 # File artifacts — specification and implementation plan
 
-**Status: PROPOSED (2026-08-18). Nothing here is built.** Operator directive: agents need to
+**Status: IMPLEMENTED and enforced server-side.** File artifacts and the per-identity cap landed 2026-08-18. The workspace ceiling and the bucket size limit are enforced from the release that carries this file; until that release is deployed, read the numbers here as the code's intent rather than production state. Operator directive: agents need to
 review file artifacts — plan markdown, Word documents, Excel sheets — so agents must be able
 to upload, store, download, and manage files in the workspace.
 
@@ -73,21 +73,24 @@ paste into a signal. `rm` states the restore window and its end date.
 
 ## 4. Storage layout, quotas, limits
 
-Backend: **Supabase Storage** (already in the project, currently unused), one private bucket
+Backend: **Supabase Storage**, one private bucket
 `swarm-files`, object path `<workspace_id>/<file_id>/<version_n>`. Postgres (`swarm.` schema)
 is the authority; the bucket is a blob store that nothing trusts on its own — the durable
 row, not the object, decides what exists (durable-by-default doctrine).
 
-Proposed caps, all enforced server-side. Most are checked at version-create time; the per-version
-BYTE cap and a brain topic's live-version retirement are settled at COMMIT, because the real object
-size is only known once the bytes are there (`file-artifacts.ts`, `objectSize` at commit):
+Caps, all enforced server-side. Most are checked at version-create time. The per-version BYTE cap is
+enforced TWICE: the bucket's `file_size_limit` refuses an oversize object during the signed upload,
+and at COMMIT `objectSize` refuses an object larger than the version declared. A brain topic's
+live-version retirement is settled at commit for the same reason — the real object size is only
+known once the bytes are there (`file-artifacts.ts`, `objectSize` at commit):
 
 | cap | value | why |
 |---|---|---|
 | per-file (per version) | 25 MB | covers every named review target (md, docx, xlsx, pdf, images) with room; keeps a single signed upload comfortably inside one request and bounds the blast radius of a mistake |
 | per-workspace total | 1 GB | ~40× the per-file cap; a coordination store, not a drive. Free-tier arithmetic: 10 workspaces per account stays bounded |
 | per-workspace file count | 500 names; normal files keep 20 live or in-flight versions per name; brain topics keep a rolling 20 live versions | keeps `file ls` bounded without forcing a living brain topic to change its name |
-| upload rate | 600 version-creates per principal per hour | same family as existing signal rate limits. Raised from 30 by operator ruling of 2026-09-10, after 30 stopped a workspace migration; landed 2026-09-12. It is a FIXED clock-hour bucket, so it bounds grants per hour, not pace, and allows a double burst across an hour boundary; the byte and name caps above are what bound what can sit |
+| upload rate | 600 version-creates per identity per hour | same family as existing signal rate limits. Raised from 30 by operator ruling of 2026-09-10, after 30 stopped a workspace migration; landed 2026-09-12. It is a FIXED clock-hour bucket, so it bounds create attempts per hour, not pace, and allows a double burst across an hour boundary; the byte and name caps above are what bound what can sit |
+| workspace upload ceiling | 2000 version-creates per workspace per hour | ceiling under docs/design/SWARM-CLOUD.md §2.8. 2000 is ~34× the busiest workspace-hour ever measured in production (58, the 2026-09-10 brain migration) and bounds the worst case (FREE_TIER_MEMBER_LIMIT 25 + FREE_TIER_PRINCIPAL_LIMIT 50 = 75 identities × 600 = 45,000) by at least 22×. The ceiling bounds a workspace's total per hour, which previously had no workspace-scoped ceiling, and it does NOT provide per-member fairness, which would need an owner-scoped bucket and is filed as its own item. It is a FIXED clock-hour bucket, bounding create attempts per hour, not pace |
 
 Exceeding a cap is a refusal with the number in it ("this file is 31 MB; the per-file limit
 is 25 MB"), not a bare status.
@@ -119,11 +122,35 @@ pending row back, not a second one.
 
 ## 5. Content types
 
-Allowlist, checked against the declared content type and the filename extension together:
-text (`text/*`, `.md`, `.txt`, `.csv`, `.html`, `.htm`, `.json`, `.yaml`), documents (`.pdf`, `.docx`,
-`.xlsx`, `.pptx`), images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`), archives
-(`.zip`, `.tar.gz`). Everything else — executables, scripts, dylibs, unknown binaries — is
-refused with the list.
+Allowlist. The declared content type and the filename extension are checked INDEPENDENTLY and
+both must pass, so the groups below are for reading: any listed extension may carry any listed
+content type.
+- **text** — extensions `.md`, `.txt`, `.csv`, `.html`, `.htm`, `.json`, `.yaml`, `.yml`; types
+  `text/<subtype>` where the subtype matches `[a-z0-9.+-]+`, `application/json`,
+  `application/yaml`, `application/x-yaml`.
+- **documents** — extensions `.pdf`, `.docx`, `.xlsx`, `.pptx`; types `application/pdf`,
+  `application/vnd.openxmlformats-officedocument.wordprocessingml.document`,
+  `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+  `application/vnd.openxmlformats-officedocument.presentationml.presentation`.
+- **images** — extensions `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`; types `image/png`,
+  `image/jpeg`, `image/gif`, `image/webp`, `image/svg+xml`.
+- **archives** — extensions `.zip`, `.tar.gz`; types `application/zip`, `application/gzip`,
+  `application/x-gzip`.
+
+A name or declared type outside those groups is refused with the list.
+
+**This is a DECLARATION check, not content inspection.** Nothing reads the bytes. An executable
+named `plan.md` and declared `text/plain` is accepted, stored, and served — which is why
+`FILE_CONTENT_WARNING` ships on every download and list payload telling the reader to treat the
+bytes as untrusted input, bound extraction, and never execute. The allowlist keeps the OBVIOUS
+cases out and shapes what a browser will do with a download; it is not a malware control, and no
+sentence here should be read as one.
+
+The type is matched whole and anchored, so a media-type PARAMETER is refused: `text/plain` passes
+and `text/plain; charset=utf-8` does not, on every type and not only text. `validateFileCommand`
+lowercases the declaration first, so case is normalised for the caller and `TEXT/PLAIN` is
+accepted. Both measured on production 2026-09-13; see the brain topic
+`content-type-parameters-are-refused` for why the parameter case is filed rather than fixed here.
 
 Two supporting rules:
 
@@ -196,12 +223,23 @@ command function (request size limits, memory, and double-handling):
    longer describes them.
    ★R15 — **the pending-row lifetime must exceed the upload URL lifetime.** The pinned
    @supabase/storage-js issues signed upload URLs valid for TWO hours
-   (StorageFileApi.ts:345), so a 1-hour pending GC would delete the row while the URL
+   (`createSignedUploadUrl`, bound to the installed package by a gate in
+   `tests/p1-cli/file-create-rate-limit.test.ts`), so a 1-hour pending GC would delete the row while the URL
    still works, leaving an orphan object with no durable record. And the row's clock
    starts BEFORE the URL is signed, so an exactly-2h sweep still races the signing delay:
    the URL lives 2 hours, and **the pending row is swept at 3 hours** — URL validity plus
    an hour of margin. The purge job also sweeps **orphan objects** — storage paths with
    no row, or whose row expired un-committed — on the same schedule.
+
+   *Measured, not inferred:* decoding a live production upload token on 2026-09-13 gave
+   `exp - iat` = 2 hours, so the two-hour window is confirmed against the running server and not
+   only against the pinned package's doc comment. The same decode showed exactly five payload
+   fields (`exp`, `iat`, `scope`, `upsert`, `url`), which is the §2.8 claim.
+
+   *Retired pointer:* this paragraph cited `StorageFileApi.ts:345` until 2026-09-13. That line
+   is the method summary; the two-hour sentence sits two lines below it, and nothing failed when
+   they drifted apart. A line number into a pinned dependency is not a citation this repository
+   can keep true, so the claim is now bound to the package by a gate instead.
 
 Download mirrors it in one step: `file_download_url` (command) verifies membership and
 liveness, then returns a signed URL good for 5 minutes. Issuing a download URL is a command,

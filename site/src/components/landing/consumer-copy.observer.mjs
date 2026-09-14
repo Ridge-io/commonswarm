@@ -7,6 +7,39 @@ const siteRoot = fs.existsSync(path.join(cwd, "dist", "index.html"))
   : path.join(cwd, "site");
 const dist = path.join(siteRoot, "dist");
 
+/* This observer reads BUILT output, and `npm --prefix site test` does not build. A stale dist
+ * therefore passes checks against source that no longer says what dist says — measured
+ * 2026-09-13, when an acceptable-use rewrite left this observer green on the previous build and
+ * red the moment the site was rebuilt for release. Refuse to report on output older than the
+ * pages it claims to describe: a loud "rebuild first" beats a silent false green. */
+const assertDistIsCurrent = () => {
+  const builtAt = Math.min(
+    ...["index.html", path.join("start", "index.html"), path.join("acceptable-use", "index.html")]
+      .map((relative) => fs.statSync(path.join(dist, relative)).mtimeMs),
+  );
+  /* A page's text can come from a layout or a component it imports, so scanning only
+   * src/pages leaves the same stale-output hole one directory over. Walk the whole source
+   * tree instead; a review arm caught the narrower version. */
+  const walk = (dir) =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return walk(full);
+      return /\.(astro|ts|mjs|js|md)$/.test(entry.name) ? [full] : [];
+    });
+  const sources = walk(path.join(siteRoot, "src"))
+    .filter((file) => !/\.(observer|test)\.(mjs|ts)$/.test(file));
+  const stale = sources.filter((file) => fs.statSync(file).mtimeMs > builtAt);
+  if (stale.length > 0) {
+    throw new Error(
+      `site/dist is older than ${stale.length} source file(s) — ${stale
+        .map((file) => path.basename(file))
+        .join(", ")}. This observer reads built output, so it would report on the previous ` +
+        "build. Run: cd site && rm -rf dist && npm run build",
+    );
+  }
+};
+assertDistIsCurrent();
+
 const decode = (value) =>
   value
     .replaceAll("&nbsp;", " ")
@@ -88,7 +121,7 @@ const required = {
     "Members and agents may share files for the workspace's work within the published caps below.",
     "general-purpose bulk storage",
     "content delivery network",
-    "Workspace file artifacts: 25 MB per version, 1 GB of unpurged versions per workspace",
+    "Workspace file artifacts: 25 MB per version, 1 GB per workspace counting live and retired versions plus uploads begun in the last 3 hours",
     "Ten live workspaces per verified identity, free, no card.",
   ],
 };

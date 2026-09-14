@@ -9103,12 +9103,24 @@ async function main(): Promise<void> {
   throw new UsageError(`unknown command: ${verb}`);
 }
 
+/**
+ * Strips anything a SERVER-SUPPLIED string could use to redraw the terminal: ANSI escapes, the
+ * C0 and C1 ranges, and the bidirectional overrides that can reorder what a reader sees.
+ *
+ * Exported shape rather than inlined in safeError() because a refusal's machine-readable fields
+ * reach stderr too. D-053 keeps us off error.message for CLASSIFICATION; it does not make the
+ * other wire fields safe to PRINT. `scope` and `resets_at` are strings the server chooses, and
+ * they were being written raw beside a sanitised message — the one unsanitised path in the pair.
+ */
+function sanitizeForTerminal(value: string): string {
+  return value
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, " ");
+}
+
 function safeError(error: unknown): string {
   const message = error instanceof Error ? error.message : "unknown error";
-  return message
-    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, " ")
-    .slice(0, 1000);
+  return sanitizeForTerminal(message).slice(0, 1000);
 }
 
 /**
@@ -9245,6 +9257,39 @@ if (isCliMain()) {
     if (error instanceof UsageError) {
       process.stderr.write(`cswarm: ${safeError(error)}\n${usage()}\n`);
       process.exitCode = 1;
+      return;
+    }
+    if (error instanceof FileCommandRefused) {
+      if (process.argv.includes("--json")) {
+        process.stdout.write(
+          `${JSON.stringify(
+            {
+              error: error.code,
+              code: error.code,
+              message: safeError(error),
+              status: error.status,
+              scope: error.scope,
+              limit: error.limit,
+              resets_at: error.resets_at,
+            },
+            null,
+            2,
+          )}\n`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      /* These come off the wire, so they go through the same terminal sanitiser as the
+       * message and are bounded: a refusal must not be able to redraw the caller's screen. */
+      const parts: string[] = [];
+      if (error.scope !== null) parts.push(`scope: ${error.scope}`);
+      if (error.limit !== null) parts.push(`limit: ${error.limit}`);
+      if (error.resets_at !== null) parts.push(`resets at: ${error.resets_at}`);
+      const extra = parts.length > 0
+        ? ` [${sanitizeForTerminal(parts.join(", ")).slice(0, 200)}]`
+        : "";
+      process.stderr.write(`cswarm: ${safeError(error)}${extra}\n`);
+      process.exitCode = exitCodeFor(error);
       return;
     }
     process.stderr.write(`cswarm: ${safeError(error)}\n`);

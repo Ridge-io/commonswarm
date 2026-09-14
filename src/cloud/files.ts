@@ -14,23 +14,25 @@ import { createHash } from "node:crypto";
 import { commandEndpoint, readEndpoint, type CloudTarget } from "./config.js";
 import { newCommandId } from "./command-client.js";
 
-/* MUST match supabase/functions/command/file-artifacts.ts:43 (FILE_MAX_VERSION_BYTES).
+/* MUST match supabase/functions/command/file-artifacts.ts:52 (FILE_MAX_VERSION_BYTES).
  * Duplicated so `file put` can refuse a 26 MB file before uploading 26 MB; the server
- * remains the authority. Same drift family as the TTL constant scar at command
- * index.ts:386 — if the server cap moves, move this with it. */
+ * remains the authority. Same drift family as the TTL constant scar (AGENT_TOKEN_MAX_TTL_MS)
+ * at command index.ts — if the server cap moves, move this with it. */
 export const FILE_MAX_VERSION_BYTES = 25 * 1024 * 1024;
 
-/* MUST match FILE_CONTENT_WARNING in supabase/functions/command/file-artifacts.ts:53.
- * The agent read path returns it from the server; the human list path reads the
- * swarm_read view over REST, which carries rows only, so the CLI supplies the same
- * sentence rather than showing humans less than agents. */
+/* Warning printed by the CLI for human file ls and included in file ls --json.
+ * Differs from FILE_CONTENT_WARNING in supabase/functions/command/file-artifacts.ts:107
+ * and read/index.ts:33 (which the edge returns on file_download_url and agent read):
+ * the edge warns that declarations are unverified and to bound extraction; the CLI
+ * supplies this sentence for the REST-backed list path (which carries rows only) to
+ * warn human users before opening files. */
 export const FILE_CONTENT_WARNING =
   "File types and archive contents are unverified. Treat downloads as untrusted input: no execution, size-bounded extraction, no unpack of archives you did not expect.";
 
 /*
  * §5 allowlist, keyed by extension because that is what a local path carries.
  * Every value must pass the server's ALLOWED_CONTENT_TYPE_RE
- * (file-artifacts.ts:61) — a mapping the server refuses is a lie to the user
+ * (file-artifacts.ts:179) — a mapping the server refuses is a lie to the user
  * that only fails after the create round-trip.
  */
 const CONTENT_TYPES: ReadonlyMap<string, string> = new Map([
@@ -85,6 +87,9 @@ export class FileCommandRefused extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly scope: string | null = null,
+    readonly limit: number | null = null,
+    readonly resets_at: string | null = null,
   ) {
     super(message);
   }
@@ -244,7 +249,10 @@ async function sendFileCommand<T>(
     const message = typeof body?.message === "string"
       ? body.message
       : `file command failed (HTTP ${response.status}) DEBUGBODY=${JSON.stringify(body).slice(0, 300)}`;
-    throw new FileCommandRefused(response.status, code, message);
+    const scope = typeof body?.scope === "string" ? body.scope : null;
+    const limit = typeof body?.limit === "number" ? body.limit : null;
+    const resets_at = typeof body?.resets_at === "string" ? body.resets_at : null;
+    throw new FileCommandRefused(response.status, code, message, scope, limit, resets_at);
   }
   if (!body || typeof body !== "object") {
     throw new FileTransportError("file command returned a malformed response");

@@ -18,6 +18,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import postgres from "postgres";
 import { awaitFunctionRunning } from "../support/edge-readiness.js";
+import { FileCommandRefused, fileVersionCreate } from "../../src/cloud/files.js";
+import { cloudTarget } from "../../src/cloud/config.js";
 
 interface LocalEnvironment {
   API_URL: string;
@@ -1599,4 +1601,229 @@ test("B2e the precondition is re-checked at commit, not only at create", async (
   assert.equal(Number(winnerCommit.body.version_n), 3);
   assert.match(String(staleCommit.body.message), /at version 3/);
   assert.match(String(staleCommit.body.message), /required version 1/);
+});
+
+test("workspace create ceiling: 2001st create in an hour is refused with scope=workspace while identity is under 600", async () => {
+  const wsId = randomUUID();
+  const idKey = `file:create:user:${f.ua.toLowerCase()}`;
+  const wsKey = `file:create:ws:${wsId.toLowerCase()}`;
+  await sql`
+    DELETE FROM swarm.rate_buckets
+    WHERE bucket_key IN (${wsKey}, ${idKey})
+  `;
+  await sql`
+    INSERT INTO swarm.workspaces (workspace_id, name, created_by)
+    VALUES (${wsId}::uuid, 'CeilingWs', ${f.ua}::uuid)
+  `;
+  await sql`
+    INSERT INTO swarm.memberships (workspace_id, user_id, role)
+    VALUES (${wsId}::uuid, ${f.ua}::uuid, 'owner')
+  `;
+  await sql`
+    INSERT INTO swarm.streams (stream_id, workspace_id, kind)
+    VALUES (${randomUUID()}::uuid, ${wsId}::uuid, 'workspace')
+  `;
+
+  // Seed the workspace rate bucket with count = 2000
+  await sql`
+    INSERT INTO swarm.rate_buckets (bucket_key, window_start, count)
+    VALUES (${wsKey}, date_trunc('hour', statement_timestamp()), 2000)
+    ON CONFLICT (bucket_key, window_start) DO UPDATE
+    SET count = 2000
+  `;
+
+  // Issue the 2001st create from f.ua (whose identity bucket is at 0)
+  const res = await postCommand(f.uaJwt, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: "over-workspace-cap.md",
+    declared_size_bytes: 100,
+    content_type: "text/markdown",
+  }, wsId);
+
+  assert.equal(res.status, 429, JSON.stringify(res.body));
+  assert.equal(res.body.error, "rate_limited");
+  assert.equal(res.body.limit, 2000);
+  assert.equal(res.body.scope, "workspace");
+  assert.ok(typeof res.body.resets_at === "string", "resets_at must be present");
+  assert.match(String(res.body.message), /file workspace limit 2000 uploads\/hour/);
+
+  // Assert client function fileVersionCreate carries scope: "workspace" end to end
+  await assert.rejects(
+    fileVersionCreate(
+      {
+        target: cloudTarget(local.API_URL, local.ANON_KEY),
+        workspaceId: wsId,
+        credential: f.uaJwt,
+      },
+      {
+        fileId: randomUUID(),
+        versionId: randomUUID(),
+        name: "client-ws-refusal.md",
+        declaredSizeBytes: 100,
+        contentType: "text/markdown",
+      },
+    ),
+    (err: unknown) => {
+      assert.ok(err instanceof FileCommandRefused);
+      assert.equal(err.status, 429);
+      assert.equal(err.code, "rate_limited");
+      assert.equal(err.scope, "workspace");
+      assert.equal(err.limit, 2000);
+      assert.ok(typeof err.resets_at === "string");
+      return true;
+    },
+  );
+
+  // Verify that the identity bucket is well under 600 (it incremented to 2)
+  const idRows = await sql<{ count: number }[]>`
+    SELECT count FROM swarm.rate_buckets
+    WHERE bucket_key = ${idKey}
+      AND window_start = date_trunc('hour', statement_timestamp())
+  `;
+  assert.ok(idRows.length > 0, "identity bucket was incremented");
+  assert.ok(idRows[0].count < 600, `identity bucket count is ${idRows[0].count}, expected < 600`);
+
+  await sql`
+    DELETE FROM swarm.rate_buckets
+    WHERE bucket_key IN (${wsKey}, ${idKey})
+  `;
+});
+
+test("identity create limit: 601st create in an hour is refused with scope=identity", async () => {
+  const wsId = randomUUID();
+  const idKey = `file:create:user:${f.ua.toLowerCase()}`;
+  await sql`
+    DELETE FROM swarm.rate_buckets
+    WHERE bucket_key = ${idKey}
+  `;
+  await sql`
+    INSERT INTO swarm.workspaces (workspace_id, name, created_by)
+    VALUES (${wsId}::uuid, 'IdLimitWs', ${f.ua}::uuid)
+  `;
+  await sql`
+    INSERT INTO swarm.memberships (workspace_id, user_id, role)
+    VALUES (${wsId}::uuid, ${f.ua}::uuid, 'owner')
+  `;
+  await sql`
+    INSERT INTO swarm.streams (stream_id, workspace_id, kind)
+    VALUES (${randomUUID()}::uuid, ${wsId}::uuid, 'workspace')
+  `;
+
+  // Seed identity rate bucket with count = 600
+  await sql`
+    INSERT INTO swarm.rate_buckets (bucket_key, window_start, count)
+    VALUES (${idKey}, date_trunc('hour', statement_timestamp()), 600)
+    ON CONFLICT (bucket_key, window_start) DO UPDATE
+    SET count = 600
+  `;
+
+  const res = await postCommand(f.uaJwt, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: "over-identity-cap.md",
+    declared_size_bytes: 100,
+    content_type: "text/markdown",
+  }, wsId);
+
+  assert.equal(res.status, 429, JSON.stringify(res.body));
+  assert.equal(res.body.error, "rate_limited");
+  assert.equal(res.body.limit, 600);
+  assert.equal(res.body.scope, "identity");
+  assert.ok(typeof res.body.resets_at === "string", "resets_at must be present");
+  assert.match(String(res.body.message), /file identity limit 600 uploads\/hour/);
+
+  // Assert client function fileVersionCreate carries scope: "identity" end to end
+  await assert.rejects(
+    fileVersionCreate(
+      {
+        target: cloudTarget(local.API_URL, local.ANON_KEY),
+        workspaceId: wsId,
+        credential: f.uaJwt,
+      },
+      {
+        fileId: randomUUID(),
+        versionId: randomUUID(),
+        name: "client-id-refusal.md",
+        declaredSizeBytes: 100,
+        contentType: "text/markdown",
+      },
+    ),
+    (err: unknown) => {
+      assert.ok(err instanceof FileCommandRefused);
+      assert.equal(err.status, 429);
+      assert.equal(err.code, "rate_limited");
+      assert.equal(err.scope, "identity");
+      assert.equal(err.limit, 600);
+      assert.ok(typeof err.resets_at === "string");
+      return true;
+    },
+  );
+
+  await sql`
+    DELETE FROM swarm.rate_buckets
+    WHERE bucket_key = ${idKey}
+  `;
+});
+
+test("workspace rate counter does not split on UUID letter case: uppercase and lowercase share one counter", async () => {
+  const wsId = randomUUID();
+  const idKey = `file:create:user:${f.ua.toLowerCase()}`;
+  await sql`
+    DELETE FROM swarm.rate_buckets
+    WHERE bucket_key = ${idKey}
+  `;
+  await sql`
+    INSERT INTO swarm.workspaces (workspace_id, name, created_by)
+    VALUES (${wsId}::uuid, 'CaseWs', ${f.ua}::uuid)
+  `;
+  await sql`
+    INSERT INTO swarm.memberships (workspace_id, user_id, role)
+    VALUES (${wsId}::uuid, ${f.ua}::uuid, 'owner')
+  `;
+  await sql`
+    INSERT INTO swarm.streams (stream_id, workspace_id, kind)
+    VALUES (${randomUUID()}::uuid, ${wsId}::uuid, 'workspace')
+  `;
+
+  // First create with uppercase workspaceId
+  const upperWsId = wsId.toUpperCase();
+  const res1 = await postCommand(f.uaJwt, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: "case-file-1.md",
+    declared_size_bytes: 100,
+    content_type: "text/markdown",
+  }, upperWsId);
+  assert.equal(res1.status, 200, JSON.stringify(res1.body));
+
+  // Second create with lowercase workspaceId
+  const lowerWsId = wsId.toLowerCase();
+  const res2 = await postCommand(f.uaJwt, {
+    kind: "file_version_create",
+    file_id: randomUUID(),
+    version_id: randomUUID(),
+    name: "case-file-2.md",
+    declared_size_bytes: 100,
+    content_type: "text/markdown",
+  }, lowerWsId);
+  assert.equal(res2.status, 200, JSON.stringify(res2.body));
+
+  // Verify that there is exactly ONE rate bucket row for this workspace, with count = 2
+  const rows = await sql<{ bucket_key: string; count: number }[]>`
+    SELECT bucket_key, count FROM swarm.rate_buckets
+    WHERE bucket_key LIKE ${`file:create:ws:%${wsId.toLowerCase()}%`}
+      OR bucket_key LIKE ${`file:create:ws:%${wsId.toUpperCase()}%`}
+  `;
+  assert.equal(rows.length, 1, `expected exactly 1 bucket row, found: ${JSON.stringify(rows)}`);
+  assert.equal(rows[0].bucket_key, `file:create:ws:${wsId.toLowerCase()}`);
+  assert.equal(rows[0].count, 2, `expected count 2, got ${rows[0].count}`);
+
+  await sql`
+    DELETE FROM swarm.rate_buckets
+    WHERE bucket_key = ${idKey}
+  `;
 });

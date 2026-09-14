@@ -66,10 +66,39 @@ export const FILE_MAX_VERSIONS_PER_NAME = BRAIN_LIVE_VERSION_LIMIT;
 // ATTEMPTS: incrementRateBucket runs before fileVersionCreate, so a size, quota, type, tombstone
 // or version-cap refusal still spends from the bucket.
 //
-// FILE_MAX_VERSION_BYTES is measured at COMMIT and is not bound into the signed upload, so
-// raising this number widens the uncommitted-object window by the same factor.
+// What is bound where (Item C / §2.8):
+// The signed upload token carries five fields: url, scope: "upload", iat, exp, and upsert: false.
+// Of these, url constrains the target object path, scope constrains the operation to upload,
+// exp constrains the upload validity window (2 hours), and upsert: false prevents overwriting
+// an existing object at that path; iat is issuance metadata and does not constrain the upload.
+// Neither size nor digest is among the token fields, and Supabase signed upload URLs carry no
+// per-URL size or digest parameter.
+// The bucket file_size_limit (FILE_MAX_VERSION_BYTES = 25 MiB) acts as the outer maximum bound
+// enforced by Storage at upload time. Commit refuses an object larger than declared
+// (file_size_exceeds_declaration); an object smaller than its declaration is accepted
+// rather than refused because the declaration already gated the quota.
 // See the brain topic file-upload-limits and docs/design/2026-08-18-FILE-ARTIFACTS.md.
 export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 600;
+
+// Per-workspace ceiling on file_version_create (docs/design/SWARM-CLOUD.md §2.8).
+//
+// 2000 is ~34x the busiest workspace-hour ever measured in production (58, the 2026-09-10
+// brain migration).
+//
+// It bounds the worst case that had no workspace-scoped ceiling before this constant existed
+// (FREE_TIER_MEMBER_LIMIT 25 + FREE_TIER_PRINCIPAL_LIMIT 50 = 75 identities x 600 = 45,000) by at least 22x.
+//
+// The ceiling bounds a workspace's total creates per hour. Before it, only the per-identity cap
+// applied, so a workspace had no ceiling of its own.
+// It does NOT provide per-member fairness: a member can own several principals, so one member
+// can spend all 2,000. True per-member fairness would need an owner-scoped bucket and is filed
+// as its own item.
+//
+// THIS IS A FIXED CLOCK-HOUR BUCKET, NOT A PACE. incrementRateBucket keys on
+// date_trunc('hour', statement_timestamp()), so it bounds create attempts per hour, not pace, and
+// allows a double burst across an hour boundary. Like the per-identity limit, it bounds
+// validated create attempts.
+export const FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR = 2000;
 
 export const FILE_BUCKET = "swarm-files";
 export const FILE_DOWNLOAD_URL_TTL_SECONDS = 300;
@@ -78,15 +107,126 @@ export const FILE_DOWNLOAD_URL_TTL_SECONDS = 300;
 export const FILE_CONTENT_WARNING =
   "content_type and archive contents are unverified client declarations; treat downloaded bytes as untrusted input — bound extraction, never execute";
 
-// No path separators, no control characters, no leading dot or whitespace --
-// the name appears in storage paths and in Content-Disposition.
+// No path separators, no C0 control characters (U+0000-U+001F; DEL U+007F and C1 U+0080-U+009F
+// are NOT refused -- see the brain topic file-name-control-chars), no leading dot or whitespace --
+// the name is only the download filename / Content-Disposition (not in storage object paths).
 const FILE_NAME_RE = /^(?![.\s])[^/\\\u0000-\u001f]{1,255}$/;
 
 // §5 allowlist: declared content type AND filename extension check together.
-const ALLOWED_CONTENT_TYPE_RE =
-  /^(text\/[a-z0-9.+-]+|application\/(pdf|json|x-yaml|yaml|zip|gzip|x-gzip|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation))|image\/(png|jpeg|gif|webp|svg\+xml))$/;
-const ALLOWED_EXTENSION_RE =
-  /\.(md|txt|csv|html?|json|yaml|yml|pdf|docx|xlsx|pptx|png|jpg|jpeg|gif|webp|svg|zip|tar\.gz)$/i;
+// Both regexes are generated from ALLOWED_TYPE_GROUPS below, so there is ONE source.
+
+/**
+ * The allowlist, grouped, so the refusal a user reads is BUILT from the same source the
+ * check tests against. AGENTS.md: "An enumeration inside a message must be generated, not
+ * typed." Measured twice on this lane: the typed sentence this replaces omitted `.html`,
+ * `.htm` and `.yml` from the extensions, and a first attempt at the content-type half said
+ * "an application type for those documents and archives", which is false — `application/json`
+ * and the two YAML types are accepted and are neither.
+ *
+ * `contentTypes` COMPILES ALLOWED_CONTENT_TYPE_RE below, so there is one source and the message
+ * cannot name a set the check does not enforce. (This comment said the opposite while the regex
+ * was hand-written beside it; a review arm caught the contradiction.) Generating a security
+ * control means proving it did not move: a differential in
+ * tests/p1-cli/file-create-rate-limit.test.ts pins the compiled regex against the exact literal
+ * it replaced, over every accepted type and a set of near misses chosen to catch an unescaped
+ * metacharacter.
+ */
+/* Printed verbatim in the refusal AND compiled into ALLOWED_CONTENT_TYPE_RE, so the message
+ * cannot name a class the check does not enforce. Written as the character class rather than
+ * `text/*`: the glob reads as "any text subtype" and the class excludes `_`, which is the
+ * precision a review arm caught the shorthand losing. Case is normalised before the check, so
+ * the class says nothing about it. */
+const TEXT_SUBTYPE_PATTERN = "text/[a-z0-9.+-]+";
+
+const ALLOWED_TYPE_GROUPS = [
+  {
+    label: "text",
+    extensions: ["md", "txt", "csv", "html", "htm", "json", "yaml", "yml"],
+    contentTypes: [
+      TEXT_SUBTYPE_PATTERN,
+      "application/json",
+      "application/yaml",
+      "application/x-yaml",
+    ],
+  },
+  {
+    label: "documents",
+    extensions: ["pdf", "docx", "xlsx", "pptx"],
+    contentTypes: [
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ],
+  },
+  {
+    label: "images",
+    extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"],
+    contentTypes: ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"],
+  },
+  {
+    label: "archives",
+    extensions: ["zip", "tar.gz"],
+    contentTypes: ["application/zip", "application/gzip", "application/x-gzip"],
+  },
+] as const;
+
+/* The content-type allowlist, compiled from the same list the refusal prints. Every entry is a
+ * LITERAL except TEXT_SUBTYPE_PATTERN, which is the one genuine wildcard; literals are fully
+ * escaped so no entry can widen the pattern by accident. A differential control in
+ * tests/p1-cli/file-create-rate-limit.test.ts pins this against the hand-written regex it
+ * replaced, across every accepted type and a set of near misses. */
+export const ALLOWED_CONTENT_TYPE_RE = new RegExp(
+  `^(?:${
+    ALLOWED_TYPE_GROUPS.flatMap((group) => group.contentTypes)
+      .map((entry) =>
+        entry === TEXT_SUBTYPE_PATTERN
+          ? entry.replace("/", "\\/")
+          : entry.replace(/[.+*?^${}()|[\]\\/]/g, "\\$&")
+      )
+      .join("|")
+  })$`,
+);
+
+export const ALLOWED_EXTENSION_RE = new RegExp(
+  `\\.(?:${
+    ALLOWED_TYPE_GROUPS.flatMap((group) => group.extensions)
+      .map((extension) => extension.replace(/\./g, "\\."))
+      .join("|")
+  })$`,
+  "i",
+);
+
+/**
+ * The refusal a user reads when the name or the declared type is off the allowlist. Both
+ * halves are generated from ALLOWED_TYPE_GROUPS, so neither can name a set the check does
+ * not enforce. The text entry is printed as the CLASS ITSELF — `text/[a-z0-9.+-]+` — not as
+ * `text/*`: the glob reads as "any text subtype" and the class is narrower, so the shorthand
+ * overclaimed. Every other accepted type is finite and is named in full.
+ *
+ * The class is anchored and carries no `_`, so `text/plain` passes while
+ * `text/plain; charset=utf-8` and `text/x_custom` are refused. CASE is not part of it:
+ * `validateFileCommand` lowercases `content_type` before any check, so `TEXT/PLAIN` is accepted
+ * and the message says case does not matter.
+ *
+ * CASE IS NOT PART OF IT. `validateFileCommand` lowercases `content_type` before any check,
+ * so `TEXT/PLAIN` is accepted on the real request path — measured on production. The regex
+ * alone refuses it, which is why a control that calls `fileContentAllowed` directly proves
+ * nothing about what a user may send. The message therefore warns about the PARAMETER, which
+ * survives lowercasing and is the spelling a third-party client is most likely to send, and
+ * says nothing about case. Tolerating parameters would change what the service accepts, so
+ * it is filed as its own item rather than done here.
+ */
+export const FILE_TYPE_REFUSED_MESSAGE =
+  `this name or content type is not on the allowlist. Extension and content type are checked separately, so each must be on this list and they need not come from the same group. Send the content type bare: a parameter such as "; charset=utf-8" is refused. Case does not matter. ${
+    ALLOWED_TYPE_GROUPS
+      .map((group) =>
+        `${group.label}: ${
+          group.extensions.map((extension) => `.${extension}`).join(" ")
+        } / ${group.contentTypes.join(", ")}`
+      )
+      .join("; ")
+  }`;
 
 export interface FileVersionCreateCommand {
   kind: typeof FILE_VERSION_CREATE_KIND;
@@ -376,7 +516,7 @@ export async function fileVersionCreate(
     return refuse(
       415,
       "file_type_refused",
-      "this name or content type is not on the allowlist: text (.md .txt .csv .json .yaml), documents (.pdf .docx .xlsx .pptx), images (.png .jpg .jpeg .gif .webp .svg), archives (.zip .tar.gz)",
+      FILE_TYPE_REFUSED_MESSAGE,
       "content type or extension off allowlist",
     );
   }
@@ -763,6 +903,11 @@ export async function fileVersionCommit(
       );
     }
   }
+  // What is bound where: the signed upload URL itself binds neither size nor digest.
+  // The storage bucket's 25 MiB limit provides the outer maximum bound at upload time.
+  // Measured size vs declaration is enforced here at commit: refuses an object larger
+  // than declared (file_size_exceeds_declaration); an object smaller than its declaration is accepted
+  // rather than refused because the declaration already gated the quota.
   const measured = await storage.objectSize(version.storage_path);
   if (measured === null) {
     return refuse(
