@@ -654,6 +654,20 @@ test("every content type the refusal names is accepted, and the set matches the 
     .filter((entry) => entry.length > 0);
   assert.ok(named.length >= 15, `the refusal names only ${named.length} content types`);
 
+  /* Assert the wildcard on BOTH sides before setting it aside. Filtering it out of the
+   * comparison is what let the shipped sentence lose the text class without any gate noticing:
+   * a Grok arm measured 33 pass, 0 fail with that entry deleted from what the user is shown. */
+  const textPattern = /const TEXT_SUBTYPE_PATTERN = "([^"]+)";/.exec(edge)?.[1];
+  assert.ok(textPattern, "TEXT_SUBTYPE_PATTERN is no longer a string constant in file-artifacts.ts");
+  assert.ok(
+    named.includes(textPattern!),
+    `the refusal no longer names ${textPattern}; a user reading it would not know any text subtype is allowed`,
+  );
+  assert.ok(
+    FILE_TYPE_REFUSED_MESSAGE.includes(textPattern!),
+    `the shipped sentence does not contain ${textPattern}`,
+  );
+
   // Behavioural half: a named type on an allowed extension must be accepted. `.md` is in the
   // text group, so the extension never decides these cases.
   for (const contentType of named) {
@@ -696,17 +710,17 @@ test("every content type the refusal names is accepted, and the set matches the 
   const enumerated = source!
     .split("|")
     .map((alternative) => unescapeLiteral(alternative))
-    .filter((entry) => !entry.startsWith("text/["));
+    .filter((entry) => entry !== textPattern);
   assert.ok(
     enumerated.length >= 12,
     `could not enumerate ALLOWED_CONTENT_TYPE_RE: parsed ${enumerated.length} from ${source}`,
   );
   assert.ok(
-    source!.split("|").some((alternative) => unescapeLiteral(alternative) === "text/[a-z0-9.+-]+"),
-    `ALLOWED_CONTENT_TYPE_RE no longer carries the text/ subtype class it prints: ${source}`,
+    source!.split("|").some((alternative) => unescapeLiteral(alternative) === textPattern),
+    `ALLOWED_CONTENT_TYPE_RE no longer carries the ${textPattern} class it prints: ${source}`,
   );
 
-  const namedLeaves = new Set(named.filter((entry) => !entry.startsWith("text/[")));
+  const namedLeaves = new Set(named.filter((entry) => entry !== textPattern));
   for (const contentType of enumerated) {
     assert.ok(
       namedLeaves.has(contentType),
@@ -953,9 +967,20 @@ test("the refusal survives the CLI's own truncation with every group intact", as
     .flatMap((match) => [...match[1]!.matchAll(/"([a-z0-9.]+)"/g)].map((entry) => entry[1]!))) {
     assert.ok(rendered.includes(`.${extension}`), `.${extension} is cut off before the user sees it`);
   }
+  /* The text entry is an IDENTIFIER in the array, not a quoted string, so a parser that reads
+   * only quoted leaves silently skips the one entry that is a pattern. A Grok arm measured the
+   * consequence: dropping the text class from the shipped sentence left every gate green.
+   * Resolve the identifier to its value and hold it to the same standard as the literals. */
+  const textPattern = /const TEXT_SUBTYPE_PATTERN = "([^"]+)";/.exec(
+    read("supabase/functions/command/file-artifacts.ts"),
+  )?.[1];
+  assert.ok(textPattern, "TEXT_SUBTYPE_PATTERN is no longer a string constant in file-artifacts.ts");
+
   for (const contentType of [...groups!.matchAll(/contentTypes: \[([^\]]*)\]/g)]
-    .flatMap((match) => [...match[1]!.matchAll(/"([^"]+)"/g)].map((entry) => entry[1]!))
-    .filter((entry) => entry !== "TEXT_SUBTYPE_WILDCARD")) {
+    .flatMap((match) =>
+      [...match[1]!.matchAll(/"([^"]+)"|(TEXT_SUBTYPE_PATTERN)/g)]
+        .map((entry) => entry[1] ?? textPattern!)
+    )) {
     assert.ok(rendered.includes(contentType), `${contentType} is cut off before the user sees it`);
   }
 });
