@@ -1342,50 +1342,59 @@ test("the acceptable-use page's updated date is not older than this lane's chang
  * its twin succeeded. The pre-charge recheck settles the SEQUENTIAL replay only. A Codex arm
  * found the concurrent case. Both refusals now re-read the ledger first and replay a settled
  * twin instead of lying. */
-test("a rate-limit refusal re-reads the ledger before it tells the caller no", () => {
+test("a rate-limit refusal settles the ledger before it audits or refuses", () => {
   const index = read("supabase/functions/command/index.ts");
 
   assert.match(
     index,
-    /const refusalOrReplay = async \([\s\S]*?const settled = await ledgerRecheck\(\);/,
-    "refusalOrReplay no longer re-reads the ledger before refusing",
+    /const settledAnswer = async \(\): Promise<[\s\S]*?const settled = await ledgerRecheck\(\);/,
+    "settledAnswer no longer re-reads the ledger",
   );
   assert.match(
     index,
     /if \(settled !== null\) return \{ status: 200, body: settled\.stored \};/,
-    "refusalOrReplay no longer replays a settled twin's stored response",
+    "settledAnswer no longer replays a settled twin's stored response",
   );
   assert.match(
     index,
     /if \(settled\?\.hit === "conflict"\)/,
-    "refusalOrReplay no longer separates a conflicting command id from a replay",
+    "settledAnswer no longer separates a conflicting command id from a replay",
   );
 
-  /* BOTH buckets must go through it — the identity bucket carried this shape before the
-   * workspace ceiling existed, so fixing only the new one would leave the older half lying. */
-  /* Anchor on the CALL, not on the closing punctuation: `return ({ ... });` also ends with
-   * `});`, so a version of this assertion that matched only the tail passed the very mutation
-   * it existed to catch. Measured — the mutation landed and the test stayed green. */
-  const goesThroughGuard = (limitConstant: string, scope: string): boolean =>
-    new RegExp(
-      `return await refusalOrReplay\\(\\{[\\s\\S]{0,400}?limit: ${limitConstant},[\\s\\S]{0,200}?scope: "${scope}",`,
-    ).test(index);
+  /* ORDER IS THE POINT. swarm.audit_events is append-only, so a rate_limit row written before
+   * the replay decision is a permanent record of a refusal that did not happen. A Codex arm
+   * caught the first version of this fix auditing first. Require the decision to come first in
+   * BOTH branches — the identity bucket has carried this shape since the 600/hour cap shipped. */
+  const decidesBeforeAuditing = (limitConstant: string): boolean => {
+    const branch = new RegExp(
+      `if \\(\\w+\\.count > ${limitConstant}\\) \\{([\\s\\S]*?)\\n\\s{8}\\}`,
+    ).exec(index)?.[1];
+    if (branch === undefined) return false;
+    const decide = branch.indexOf("await settledAnswer()");
+    const audit = branch.indexOf("insertAudit(");
+    return decide >= 0 && audit >= 0 && decide < audit;
+  };
 
   assert.ok(
-    goesThroughGuard("FILE_CREATE_RATE_LIMIT_PER_HOUR", "identity"),
-    "the per-identity 429 no longer goes through refusalOrReplay",
+    decidesBeforeAuditing("FILE_CREATE_RATE_LIMIT_PER_HOUR"),
+    "the per-identity branch audits a rate_limit refusal before deciding whether it is refusing",
   );
   assert.ok(
-    goesThroughGuard("FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR", "workspace"),
-    "the per-workspace 429 no longer goes through refusalOrReplay",
+    decidesBeforeAuditing("FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR"),
+    "the per-workspace branch audits a rate_limit refusal before deciding whether it is refusing",
   );
 
-  /* The comment must keep saying this is a narrowing, not a cure: under READ COMMITTED a twin
-   * that has not committed is invisible, so simultaneous requests can still split. A future
-   * reader who believes it is a cure will not do the reorder that is filed. */
+  /* The comment must keep explaining WHY twins cannot pass together — the identity bucket's
+   * ON CONFLICT DO UPDATE holds a row lock to commit. An earlier comment called this "a
+   * narrowing, not a cure" and a gate pinned that wording; the claim was false, and the control
+   * defended it exactly as firmly as a true one would have been defended. */
   assert.match(
     index,
-    /NARROWING, not a cure/,
-    "the code no longer records that the concurrent split is only narrowed, not removed",
+    /holds a row lock to end of\s*\n\s*\* transaction/,
+    "the code no longer records why same-command twins serialise at the identity bucket",
+  );
+  assert.ok(
+    !/NARROWING, not a cure/.test(index),
+    "the retired over-cautious claim is back; the upsert serialises same-principal twins",
   );
 });

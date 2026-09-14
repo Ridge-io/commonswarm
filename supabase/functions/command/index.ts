@@ -8349,25 +8349,36 @@ async function handleTransaction(
       /* The pre-charge recheck above settles the SEQUENTIAL replay: a command id that already
        * has a stored response never reaches the meter. It does not settle the CONCURRENT one.
        * Two in-flight requests sharing a new command id both see null there, both charge, and
-       * at the cap boundary one is told "Upload refused" while its twin is succeeding — a false
-       * sentence about the caller's own request, and it burns a slot for a duplicate.
+       * at the cap boundary one would be told "Upload refused" while its twin is succeeding — a
+       * false sentence about the caller's own request, and a duplicate burning a slot.
        *
-       * Re-read the ledger before refusing. If the twin has settled by then, replay its answer
-       * instead of lying. This is a NARROWING, not a cure: under READ COMMITTED a twin that has
-       * not yet committed is still invisible, so two genuinely simultaneous requests can still
-       * split 200/429. The cure is to charge the meter after the post-lock recheck inside the
-       * handler, which reorders a locking path and belongs in its own lane — filed, not done
-       * here. The identity bucket below has carried this shape since the 600/hour cap shipped;
-       * the guard is applied to both. */
-      const refusalOrReplay = async (
-        refusal: { status: number; body: Record<string, unknown> },
-      ): Promise<{ status: number; body: Record<string, unknown> }> => {
+       * So re-read the ledger before refusing and replay a settled twin instead.
+       *
+       * Twins cannot actually pass this point together. incrementRateBucket is an
+       * INSERT ... ON CONFLICT DO UPDATE on one row, and DO UPDATE holds a row lock to end of
+       * transaction. Same-command twins share a principal, so they share the IDENTITY bucket
+       * row charged first below: the second blocks there until the first commits, and its fresh
+       * recheck then sees the winner's ledger row under READ COMMITTED and replays it. Two
+       * principals colliding on one command id do not share that row, but they carry different
+       * request hashes, so the recheck returns `conflict` and a 409 — which is the correct
+       * answer, not a false refusal.
+       *
+       * An earlier version of this comment called the guard "a narrowing, not a cure" and a gate
+       * pinned that wording. A Codex arm showed the claim was false: the upsert serialises them.
+       * The wording was over-cautious, and a control that pins an over-cautious claim defends a
+       * false statement exactly as firmly as a confident one.
+       *
+       * The identity bucket has carried this shape since the 600/hour cap shipped, so the guard
+       * is applied to both branches. */
+      const settledAnswer = async (): Promise<
+        { status: number; body: Record<string, unknown> } | null
+      > => {
         const settled = await ledgerRecheck();
         if (settled?.hit === "conflict") {
           return { status: 409, body: { error: "command_id_conflict" } };
         }
         if (settled !== null) return { status: 200, body: settled.stored };
-        return refusal;
+        return null;
       };
 
       // §4 rate limit, charged only for the verb that consumes quota (★R9.6) —
@@ -8391,6 +8402,11 @@ async function handleTransaction(
         if (bucket.count > FILE_CREATE_RATE_LIMIT_PER_HOUR) {
           const detail =
             `file identity limit ${FILE_CREATE_RATE_LIMIT_PER_HOUR} uploads/hour; resets at ${bucket.resetsAt}`;
+          /* Decide BEFORE auditing. swarm.audit_events is append-only, so writing
+           * outcome: "rate_limit" and then returning a 200 replay leaves a permanent row
+           * saying this command was refused when it was not. */
+          const settled = await settledAnswer();
+          if (settled !== null) return settled;
           await insertAudit(tx, {
             auth,
             commandKind: kind,
@@ -8401,7 +8417,7 @@ async function handleTransaction(
             detail,
             hash,
           });
-          return await refusalOrReplay({
+          return {
             status: 429,
             body: {
               error: "rate_limited",
@@ -8410,7 +8426,7 @@ async function handleTransaction(
               resets_at: bucket.resetsAt,
               scope: "identity",
             },
-          });
+          };
         }
         const wsBucket = await incrementRateBucket(
           tx,
@@ -8420,6 +8436,11 @@ async function handleTransaction(
         if (wsBucket.count > FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR) {
           const detail =
             `file workspace limit ${FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR} uploads/hour; resets at ${wsBucket.resetsAt}`;
+          /* Decide BEFORE auditing. swarm.audit_events is append-only, so writing
+           * outcome: "rate_limit" and then returning a 200 replay leaves a permanent row
+           * saying this command was refused when it was not. */
+          const settled = await settledAnswer();
+          if (settled !== null) return settled;
           await insertAudit(tx, {
             auth,
             commandKind: kind,
@@ -8430,7 +8451,7 @@ async function handleTransaction(
             detail,
             hash,
           });
-          return await refusalOrReplay({
+          return {
             status: 429,
             body: {
               error: "rate_limited",
@@ -8439,7 +8460,7 @@ async function handleTransaction(
               resets_at: wsBucket.resetsAt,
               scope: "workspace",
             },
-          });
+          };
         }
       }
       const storage = fileStorage();
