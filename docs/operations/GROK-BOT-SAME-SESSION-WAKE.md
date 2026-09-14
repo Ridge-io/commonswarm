@@ -2,7 +2,7 @@
 
 This branch adds `grok-bot` to `cswarm receive`. It calls the local gateway to
 inject a prompt into the configured Bot agent. It does not start a model.
-The implementation is not yet released. The CLI version remains 0.1.68.
+Shipped on main. Install/build a CLI at **0.1.69+** to use this path (older 0.1.68 binaries lack it).
 
 ## Configure and serve
 
