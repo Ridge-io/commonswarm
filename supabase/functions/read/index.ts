@@ -650,6 +650,31 @@ async function handle(
           AND p.revoked_at IS NULL
         ORDER BY p.principal_id ASC
       `;
+      /* The workspace's HUMAN name, so an agent and a person call one workspace the same
+       * thing — read from swarm_read.workspaces, the SAME view the app's switcher reads.
+       *
+       * Not swarm.workspaces. This block installs the agent OWNER's claims above
+       * (`sub: agent.owner_user_id`) and runs as ROLE swarm_read (`SET LOCAL ROLE swarm_read`
+       * earlier in this handler), so the view's own `swarm.is_member(workspace_id, auth.uid())`
+       * gate resolves and admits exactly the workspaces that owner belongs to.
+       *
+       * Reaching past it to the base table is what took this resource down on 2026-09-14:
+       * HTTP 500 for every caller. Measured as the real role — `swarm_read` HAS USAGE on the
+       * swarm schema but no SELECT on swarm.workspaces, so the failure is
+       * `permission denied for table workspaces`. (The first write-up of this blamed the
+       * `authenticated` role and a schema denial. Both were wrong: the JWT `role` claim drives
+       * auth.uid(), not current_role.)
+       *
+       * An ARCHIVED workspace cannot reach this line at all — swarm.is_member joins
+       * `archived_at IS NULL`, so archiving revokes the agent and the handler returns 403 at
+       * the membership gate above. The null branch below is for a deployment that does not
+       * send the field, not for archived rows. */
+      const workspaceRows = await tx<{ name: string }[]>`
+        SELECT name
+        FROM swarm_read.workspaces
+        WHERE workspace_id = ${agent.principal_workspace_id}::uuid
+        LIMIT 1
+      `;
       return json(200, {
         members,
         agents,
@@ -662,6 +687,7 @@ async function handle(
           principal_id: agent.principal_id,
           owner_user_id: agent.owner_user_id,
           workspace_id: agent.principal_workspace_id,
+          workspace_name: workspaceRows[0]?.name ?? null,
           managed_at: agent.managed_at,
         },
       });

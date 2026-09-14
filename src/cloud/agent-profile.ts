@@ -32,6 +32,16 @@ export interface AgentProfile {
   workspace_id: string;
   principal_id: string;
   credential_file: string;
+  /**
+   * The workspace's human name at the time setup ran, so a person reading this file can tell
+   * WHICH workspace it points at without resolving a uuid.
+   *
+   * OPTIONAL, and it must stay optional. The check below compares the key set exactly, so
+   * requiring this would declare every profile written before 0.1.71 "damaged" — on every host
+   * in the fleet at once. It is also a CACHE, not the authority: a workspace can be renamed
+   * after setup, so anything asserting the current name reads it from the server.
+   */
+  workspace_name?: string;
 }
 
 export function privatePath(path: string): string {
@@ -133,7 +143,15 @@ export async function readAgentProfile(path: string): Promise<AgentProfile> {
   if (raw === null) throw new AgentSetupError("profile_missing", "The agent profile is missing. Run cswarm setup with the connection file.");
   let p: AgentProfile;
   try { p = JSON.parse(raw); } catch { throw new AgentSetupError("profile_invalid", "The agent profile is damaged. Run setup again."); }
-  if (!p || p.version !== 1 || Object.keys(p).sort().join() !== ["version", "url", "anon_key", "workspace_id", "principal_id", "credential_file"].sort().join() ||
+  /* Exactly the required keys, optionally plus workspace_name. Written as two accepted sets
+   * rather than a subset test, so an unknown key is still a damaged profile. */
+  const required = ["version", "url", "anon_key", "workspace_id", "principal_id", "credential_file"];
+  const keys = Object.keys(p ?? {}).sort().join();
+  const keysAccepted = keys === [...required].sort().join() ||
+    keys === [...required, "workspace_name"].sort().join();
+  if (!p || p.version !== 1 || !keysAccepted ||
+      (p.workspace_name !== undefined &&
+        (typeof p.workspace_name !== "string" || p.workspace_name.length > 200)) ||
       typeof p.url !== "string" || typeof p.anon_key !== "string" ||
       typeof p.workspace_id !== "string" || !ONBOARDING_UUID.test(p.workspace_id) ||
       typeof p.principal_id !== "string" || !ONBOARDING_UUID.test(p.principal_id) ||
@@ -159,12 +177,16 @@ export async function openProfileCredential(profile: AgentProfile, fetcher: type
   return AgentCredentialSession.open({ target, workspaceId: profile.workspace_id, presented: agent, store, fetcher });
 }
 
-export async function saveAgentProfile(path: string, connection: AgentConnectionEnvelope): Promise<AgentProfile> {
+export async function saveAgentProfile(path: string, connection: AgentConnectionEnvelope, workspaceName?: string): Promise<AgentProfile> {
   path = await assertPrivateLocation(path);
   const profile: AgentProfile = {
     version: 1, url: connection.url, anon_key: connection.anon_key,
     workspace_id: connection.workspace_id, principal_id: connection.principal_id,
     credential_file: join(dirname(path), "credential.json"),
+    /* Only when the server actually gave one. The key is omitted rather than written null, so
+     * a profile from a deployment that does not send the name keeps exactly the six keys every
+     * released client already accepts. */
+    ...(workspaceName === undefined ? {} : { workspace_name: workspaceName }),
   };
   await withFileLock(dirname(path), "setup", async () => {
     const existingRaw = await readSecureJsonFileIfPresent(path, ONBOARDING_MAX_FILE_BYTES);

@@ -49,11 +49,18 @@ export async function setupAgent(options: {
     if (!page.capabilities.cursorAfter) throw new AgentSetupError("check_paging_unsupported", "Update this deployment to support inbox paging before using quick setup.");
     return {
       name: directory.agents.find(a => a.principal_id === connection.principal_id)?.name,
+      /* The workspace's human name, from the directory read this already does. Item D: the
+       * agent and the person must call one workspace the same thing, and setup is where the
+       * agent first learns which workspace it is in. */
+      workspace_name: directory.identity?.workspace_name ?? null,
       inbox_pending: page.signals.length > 0,
       expires_at: session.expiry === null ? null : new Date(session.expiry).toISOString(),
     };
   }, options.fetcher);
-  await saveAgentProfile(profilePath, connection);
+  /* Cache the name in the profile so a person reading the file can tell WHICH workspace it
+   * points at without resolving a uuid. A cache, not the authority: a workspace can be renamed
+   * after setup, so every surface that ASSERTS the current name reads it from the server. */
+  await saveAgentProfile(profilePath, connection, identity.workspace_name ?? undefined);
   const receive = await readReceiveBinding(profilePath, options.hostSessionId);
   const wakeProviders = RECEIVE_WAKE_PROVIDERS.map(provider => ({ provider, preview: provider === RECEIVE_WAKE_PROVIDER, requires_idle_test: true }));
   const primaryWakeProvider = wakeProviders.find(provider => provider.provider === RECEIVE_WAKE_PROVIDER)!;

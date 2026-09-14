@@ -3450,6 +3450,9 @@ async function signalAuthorLabels(
           sanitizeDisplayLabel(agent.name, "Unnamed agent"),
         ]),
       ),
+      /* Free: this directory read already happened for the author names, so naming the
+       * workspace in the inbox and feed headers costs no extra round trip. */
+      workspaceName: workspaceLabel(directory),
     };
   }
   const human = credential.human!;
@@ -4115,9 +4118,33 @@ export function describeAudience(
 /**
  * The roster as a user reads it. Pure, so the CLAIMS it makes can be gated. FM-1.
  */
+/**
+ * The workspace's human name as the server proved it, or null.
+ *
+ * ONE reader for every surface that names a workspace, so `whoami`, `members`, the roster header
+ * and the profile file cannot drift into three spellings of the same fact. null is not an error:
+ * an older deployment omits the field and an archived workspace has no row in the view the edge
+ * reads, and in both cases the id alone is the honest rendering.
+ */
+export function workspaceLabel(directory: SignalDirectory): string | null {
+  const name = directory.identity?.workspace_name;
+  /* A blank or whitespace-only name is UNKNOWN, not "Unnamed workspace". Passing it through
+   * sanitizeDisplayLabel would manufacture a label the server never sent, which is the same
+   * defect as inventing one for null — just harder to see. A Grok arm caught this path.
+   * Unknown renders the id alone, which is always true. */
+  if (name == null || name.trim() === "") return null;
+  return sanitizeDisplayLabel(name, "Unnamed workspace");
+}
+
+/** `Name (id)` when the name is known, the bare id when it is not. */
+export function renderWorkspace(id: string, name: string | null): string {
+  return name === null ? id : `${name} (${id})`;
+}
+
 export function renderRoster(
   directory: SignalDirectory,
   memberNames: ReadonlyMap<string, string>,
+  workspace?: { workspaceId: string; workspaceName: string | null },
 ): string {
   /* FM-1, found by Verity: an EMPTY roster is ambiguous and must not be reported as emptiness.
    *
@@ -4132,6 +4159,10 @@ export function renderRoster(
    * list is genuinely empty — you are demonstrably scoped to the workspace — so "none yet" stays
    * true there and is kept. */
   const lines: string[] = [];
+  if (workspace !== undefined) {
+    lines.push(`Workspace: ${renderWorkspace(workspace.workspaceId, workspace.workspaceName)}`);
+    lines.push("");
+  }
   if (directory.members.length === 0 && directory.agents.length === 0) {
     /* Say which. FM-1 first said "this command cannot tell you which" — TRUE-sounding and FALSE,
      * caught by Verity within hours of it shipping in 0.1.10.
@@ -4220,6 +4251,9 @@ async function runMembers(args: Arguments): Promise<void> {
         JSON.stringify(
           {
             workspace_id: selected.selectedWorkspace,
+            /* The workspace's human name beside its id, so this roster and the app name one
+             * workspace the same way. null on an older deployment or an archived row. */
+            workspace_name: workspaceLabel(directory),
             members: directory.members.map((member) => ({
               user_id: member.user_id,
               name: memberNames.get(member.user_id) ?? null,
@@ -4243,7 +4277,10 @@ async function runMembers(args: Arguments): Promise<void> {
     return;
   }
 
-  process.stdout.write(renderRoster(directory, memberNames));
+  process.stdout.write(renderRoster(directory, memberNames, {
+    workspaceId: selected.selectedWorkspace,
+    workspaceName: workspaceLabel(directory),
+  }));
 }
 
 /** Show the identity authenticated by this request, never a saved human profile. */
@@ -4309,11 +4346,16 @@ async function runWhoami(args: Arguments): Promise<void> {
       `WARNING: the credential authenticated as ${displayName} (${identity.principal_id}), but its JSON metadata names ${artifactPrincipalId}. Trust the authenticated identity shown here and replace the inconsistent artifact.\n`,
     );
   }
+  /* The workspace's human name, so `cswarm whoami` answers "which workspace is this?" the way
+   * a person would ask it. null on an older deployment or a nameless row; the id is always
+   * printed, so a missing name degrades to what this command already showed. */
+  const workspaceName = workspaceLabel(directory);
   const output = {
     credential_valid: identity.credential_valid,
     principal_id: identity.principal_id,
     display_name: displayName,
     workspace_id: identity.workspace_id,
+    workspace_name: workspaceName,
     owner_user_id: identity.owner_user_id,
     owner_display_name: ownerName,
     credential_metadata_match: artifactMatches,
@@ -4328,7 +4370,7 @@ async function runWhoami(args: Arguments): Promise<void> {
   process.stdout.write(
     `You are ${displayName} (${identity.principal_id}).\n` +
       `Credential valid now: yes.\n` +
-      `Workspace: ${identity.workspace_id}.\n` +
+      `Workspace: ${renderWorkspace(identity.workspace_id, workspaceName)}.\n` +
       `Owner: ${ownerName} (${identity.owner_user_id}).\n` +
       (output.renewal_grant === null
         ? "Grant: no current renewal grant is visible. Next step: ask a workspace owner to mint a new credential.\n"
@@ -4622,6 +4664,11 @@ async function runSignalRead(
     inbox,
     includeStale: args.has("include-stale"),
     authors,
+    /* Name the workspace in the header so a reader can tell this is the inbox they meant.
+     * Omitted on the human path, whose labels carry no name; the header then reads as before. */
+    ...(authors.workspaceName === undefined ? {} : {
+      workspace: { id: selected.selectedWorkspace, name: authors.workspaceName },
+    }),
   })}\n`);
   if (selected.kind === "agent") {
     await reportRenderedBroadcasts(
