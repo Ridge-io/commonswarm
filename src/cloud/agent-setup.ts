@@ -55,12 +55,14 @@ export async function setupAgent(options: {
   }, options.fetcher);
   await saveAgentProfile(profilePath, connection);
   const receive = await readReceiveBinding(profilePath, options.hostSessionId);
+  const wakeProviders = RECEIVE_WAKE_PROVIDERS.map(provider => ({ provider, preview: provider === RECEIVE_WAKE_PROVIDER, requires_idle_test: true }));
+  const primaryWakeProvider = wakeProviders.find(provider => provider.provider === RECEIVE_WAKE_PROVIDER)!;
   return {
     setup_version: AGENT_CONNECTION_VERSION, connected: true,
     profile: profilePath, principal_id: connection.principal_id, workspace_id: connection.workspace_id,
     ...identity,
     host: await hostPromise,
-    receive_capabilities: { turn: RECEIVE_PROVIDERS, wake: RECEIVE_WAKE_PROVIDERS.map(provider => ({ provider, preview: provider === RECEIVE_WAKE_PROVIDER, requires_idle_test: true })) },
+    receive_capabilities: { turn: RECEIVE_PROVIDERS, wake: primaryWakeProvider, wake_providers: wakeProviders },
     receive: receiveStatus(receive),
     ...(receive === null ? { receive_choice: RECEIVE_CHOICE } : {}),
     next_action: receive === null
