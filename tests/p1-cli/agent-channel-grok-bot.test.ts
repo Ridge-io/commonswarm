@@ -92,6 +92,8 @@ test("Grok Bot gateway canary requires explicit idle and matching CLI receipt be
       version: 1, url: `http://127.0.0.1:${(server.address() as { port: number }).port}`, anon_key: "fixture-key", workspace_id: WS, principal_id: AGENT,
       credential: { message: AGENT_CREDENTIAL_MESSAGE_D088, status: "accepted", principal_id: AGENT, token_id: "11111111-1111-4111-8111-111111111111", run_id: "22222222-2222-4222-8222-222222222222", agent_token: TOKEN, expires_at: "2099-01-01T00:00:00.000Z" },
     })));
+    await assert.rejects(configureAgentReceive({ ...options, mode: "turn", grokBotAgentId: "garbage" }), { code: "grok_bot_agent_id_required" });
+    assert.equal(await readReceiveBinding(profile, host), null);
     await assert.rejects(configureAgentReceive(options), { code: "grok_bot_gateway_missing" });
     await writeFile(gatewayPath, JSON.stringify({ host: "0.0.0.0", port: (server.address() as { port: number }).port, token: gatewayToken }));
     const configured = await configureAgentReceive(options);
@@ -128,6 +130,11 @@ test("Grok Bot gateway canary requires explicit idle and matching CLI receipt be
     assert.equal(acks.length, 1);
     assert.equal(posts.length, 1);
     assert.equal((await readReceiveBinding(profile, host))!.canary!.emitted_while_idle, true);
+    await requestReceiveCanary(profile, host);
+    const nextCanary = (await readReceiveBinding(profile, host))!;
+    assert.equal(nextCanary.idle, false);
+    assert.equal(nextCanary.last_turn_ended_at, null);
+    assert.equal(nextCanary.wake_verified_at, null);
     await configureAgentReceive({ ...options, mode: "turn" });
     await serving;
     assert.equal(receiveStatus(await readReceiveBinding(profile, host)).channel_running, false);

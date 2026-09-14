@@ -116,6 +116,11 @@ test("setup checks identity before saving and starts no receiver", async () => {
   const result = await setupAgent({ connectionFile: input, profilePath: path, fetcher: fake.fetcher });
   assert.equal(result.connected, true);
   assert.equal(JSON.stringify(result).includes(TOKEN), false);
+  assert.deepEqual(result.receive_capabilities.wake, { provider: "claude", preview: true, requires_idle_test: true });
+  assert.deepEqual(result.receive_capabilities.wake_providers, [
+    { provider: "claude", preview: true, requires_idle_test: true },
+    { provider: "grok-bot", preview: false, requires_idle_test: true },
+  ]);
   assert.equal((await lstat(path)).mode & 0o777, 0o600);
   assert.equal((await lstat(dirname(path))).mode & 0o777, 0o700);
   assert.deepEqual(fake.requests.map(r => r.resource).sort(), ["members", "signals"]);
@@ -216,6 +221,7 @@ test("wake requires explicit preview choice and cannot claim support on Codex", 
   const common = { profilePath, mode: "wake", hostSessionId: "session-one", execution: { command: process.execPath, args: [(process.env.CSWARM_TEST_CLI ?? resolve("dist/cli.js"))] } };
   await assert.rejects(configureAgentReceive({ ...common, provider: "codex" }), { code: "wake_host_unsupported" });
   await assert.rejects(configureAgentReceive({ ...common, provider: "claude" }), { code: "wake_preview_consent_required" });
+  await assert.rejects(configureAgentReceive({ ...common, provider: "codex", mode: "turn", grokBotAgentId: AGENT }), { code: "grok_bot_agent_id_unsupported" });
   assert.equal(receiveStatus(null).wake_verified, false);
 });
 
