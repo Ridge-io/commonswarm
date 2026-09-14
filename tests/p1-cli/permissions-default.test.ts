@@ -71,7 +71,7 @@ test("onboarding does not ask agents to grant worker permissions", () => {
 test("receive help names the available turn integrations and the limited wake path", () => {
   const help = onboardingUsage();
   assert.ok(help.includes(`--provider ${RECEIVE_PROVIDERS.join("|")}`));
-  assert.match(help, /Wake uses a Claude Code preview channel in this same session/);
+  assert.match(help, /Wake uses a Claude Code preview channel or the local Grok Bot gateway in this same session/);
   assert.match(help, /unverified until an idle canary is received/);
 });
 

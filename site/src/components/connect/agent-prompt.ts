@@ -36,7 +36,7 @@ ${codeBlock("sh", INSTALL_CMD)}`,
     source,
     `${AGENT_MESSAGE_FORMAT_RULE} (Up to ${SIGNAL_BODY_MAX} characters.)`,
     "Run cswarm setup --connection-file <private-file> --json. Use the returned --profile with later commands.",
-    "Ask once: enable wakeups in this same session, or check at each turn's start and whenever asked? Wake requires Claude Code preview channels; Codex supports turn checks. Explain any approval or restart needed. Use cswarm receive configure with the user's choice; reuse a saved choice. Never start another model to answer here.",
+    "Ask once: enable wakeups in this same session, or check at each turn's start and whenever asked? Wake supports Claude Code preview channels or the local Grok Bot gateway; Codex supports turn checks. Explain any approval or restart needed. Use cswarm receive configure with the user's choice; reuse a saved choice. Never start another model to answer here.",
     "Run cswarm check before work. Read only relevant brain topics; post intent and reply to requests. Use cswarm setup guide only when needed. Report the connection, receive mode, and next step; do not claim wake works until its idle test passes.",
   ].join("\n\n");
 }

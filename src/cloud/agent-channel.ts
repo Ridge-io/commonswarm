@@ -1,4 +1,4 @@
-/** Claude channel transport. The host owns this stdio process; it never starts a model. */
+/** Shared receive loop for Claude stdio and the local Grok Bot gateway. Never starts a model. */
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -45,7 +45,35 @@ export class ChannelReceiptGate {
   }
 }
 
-interface ChannelJournal { version: 1; listener_instance_id: string; pending: ChannelPending | null }
+interface ChannelJournal { version: 1; listener_instance_id: string; pending: ChannelPending | null; notified?: boolean }
+
+export interface GatewayChannelTransport {
+  send(pending: ChannelPending, signal: AbortSignal): Promise<void>;
+}
+
+export function channelReceiptPath(profile: string, host: string): string {
+  return join(dirname(privatePath(profile)), `channel-receipt-${profileScopeKey(host)}.json`);
+}
+
+/** The receiver alone writes the journal. CLI receipts use a separate atomic mailbox. */
+export async function confirmAgentChannel(options: { profilePath: string; hostSessionId: string; signalId: string; receipt: string }) {
+  const { profilePath, hostSessionId: host } = options;
+  const binding = await readReceiveBinding(profilePath, host);
+  if (!binding || binding.provider !== "grok-bot" || binding.requested_mode !== "wake" || !receiveStatus(binding).channel_running) {
+    throw new AgentSetupError("channel_not_running", "Start this Bot session's receive serve process before confirming a wake.");
+  }
+  const raw = await readSecureJsonFileIfPresent(join(dirname(privatePath(profilePath)), `channel-${profileScopeKey(host)}.json`), 128 * 1024);
+  let journal: ChannelJournal;
+  try { journal = JSON.parse(raw ?? "null"); } catch { throw new AgentSetupError("channel_journal_invalid", "The channel journal is damaged."); }
+  if (!journal?.notified || !journal.pending || !Number.isFinite(Date.parse(journal.pending.row?.leasedUntil)) || Date.parse(journal.pending.row.leasedUntil) <= Date.now()) {
+    throw new AgentSetupError("channel_receipt_expired", "Wait for a fresh notification before confirming receipt.");
+  }
+  new ChannelReceiptGate(host, journal.pending).confirm(options.signalId, options.receipt, host);
+  await writeSecureJsonFile(channelReceiptPath(profilePath, host), JSON.stringify({
+    signal_id: options.signalId, receipt: options.receipt, host_session_id: host,
+  }));
+  return { state: "pending", next_action: "Receipt saved locally. The receiver must record it with the service. Confirm with cswarm receive status; a wake test must show wake_verified: true." };
+}
 
 function canaryBody(nonce: string): string {
   return `CommonSwarm wake test ${nonce}. Confirm receipt in this session. No reply or other work is needed.`;
@@ -56,13 +84,13 @@ export function isOwnCanary(binding: ReceiveBinding, row: DeliveryRow, principal
     row.signal.body === canaryBody(binding.canary.nonce);
 }
 
-export async function serveAgentChannel(options: { profilePath: string; hostSessionId: string }): Promise<void> {
+export async function serveAgentChannel(options: { profilePath: string; hostSessionId: string; gateway?: GatewayChannelTransport }): Promise<void> {
   const profilePath = privatePath(options.profilePath);
   const profile = await readAgentProfile(profilePath);
   const host = options.hostSessionId;
   const initial = await readReceiveBinding(profilePath, host);
-  if (!initial || initial.provider !== "claude" || initial.requested_mode !== "wake") {
-    throw new AgentSetupError("channel_not_configured", "Choose and configure wake mode for this Claude session first.");
+  if (!initial || initial.provider !== (options.gateway ? "grok-bot" : "claude") || initial.requested_mode !== "wake") {
+    throw new AgentSetupError("channel_not_configured", "Choose and configure wake mode for this session first.");
   }
   if (receiveStatus(initial).channel_running) throw new AgentSetupError("channel_already_running", "This session already has a live channel. Keep one receiver.");
   const runtimeId = randomUUID();
@@ -124,6 +152,7 @@ export async function serveAgentChannel(options: { profilePath: string; hostSess
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   const persist = async () => {
     journal.pending = gate.pending;
+    journal.notified = notified;
     await writeSecureJsonFile(journalPath, JSON.stringify(journal));
   };
 
@@ -171,7 +200,7 @@ export async function serveAgentChannel(options: { profilePath: string; hostSess
     const binding = await readReceiveBinding(profilePath, host);
     if (binding && receiveStatus(binding).channel_running) throw new AgentSetupError("channel_already_running", "This session already has a live channel.");
     await updateReceiveBinding(profilePath, host, b => ({
-      ...b, channel_instance_id: runtimeId, channel_pid: process.pid,
+      ...b, ...(options.gateway ? { idle: false } : {}), channel_instance_id: runtimeId, channel_pid: process.pid,
       channel_heartbeat_at: new Date().toISOString(), wake_verified_at: null,
       canary: b.canary ? { ...b.canary, emitted_while_idle: false, received_at: null } : null,
     }));
@@ -182,7 +211,8 @@ export async function serveAgentChannel(options: { profilePath: string; hostSess
   });
   try {
     await persist();
-    await server.connect(new StdioServerTransport());
+    if (options.gateway) initialized = true;
+    else await server.connect(new StdioServerTransport());
     heartbeat = setInterval(() => { void touch().catch(stop); }, CHANNEL_HEARTBEAT_MS);
     manager?.start();
     while (!stopped) {
@@ -192,7 +222,7 @@ export async function serveAgentChannel(options: { profilePath: string; hostSess
       if (!binding || binding.requested_mode !== "wake" || binding.channel_instance_id !== runtimeId) break;
       // Startup settings can be loaded by the wrong host conversation. Wait for
       // a matching host-generated hook on this connection before claiming anything.
-      if (binding.turn_verified_at === null || Date.parse(binding.turn_verified_at) < startedAt || Date.parse(binding.turn_verified_at) > Date.now()) {
+      if (!options.gateway && (binding.turn_verified_at === null || Date.parse(binding.turn_verified_at) < startedAt || Date.parse(binding.turn_verified_at) > Date.now())) {
         await delay(100, undefined, { signal: abort.signal }); continue;
       }
       try {
@@ -200,6 +230,17 @@ export async function serveAgentChannel(options: { profilePath: string; hostSess
         if (gate.pending !== null) {
           if (receiptWriteInFlight) { await delay(25, undefined, { signal: abort.signal }); continue; }
           const pending = gate.pending;
+          if (options.gateway && notified && !pending.confirmed && Date.parse(pending.row.leasedUntil) > Date.now()) {
+            const raw = await readSecureJsonFileIfPresent(channelReceiptPath(profilePath, host), 4096);
+            if (raw !== null) {
+              let receipt: Record<string, unknown>;
+              try { receipt = JSON.parse(raw); } catch { receipt = {}; }
+              if (receipt?.signal_id === pending.row.signal.id && receipt?.receipt === pending.receipt && receipt?.host_session_id === host) {
+                gate.confirm(receipt.signal_id, receipt.receipt, receipt.host_session_id);
+                await persist();
+              }
+            }
+          }
           if (pending.confirmed && !receiptWriteInFlight) {
             const currentContext = manager?.currentContext() ?? context;
             const ack = currentContext ? managedAckInput({
@@ -230,7 +271,13 @@ export async function serveAgentChannel(options: { profilePath: string; hostSess
             if ((await readReceiveBinding(profilePath, host))?.requested_mode !== "wake") break;
             const isCanary = isOwnCanary(binding, pending.row, profile.principal_id);
             if (isCanary && !binding.idle) { await delay(250, undefined, { signal: abort.signal }); continue; }
-            await server.notification({ method: "notifications/claude/channel", params: {
+            if (options.gateway) {
+              // Publish the challenge before HTTP so an immediate CLI receipt can find it.
+              notified = true;
+              await persist();
+              try { await options.gateway.send(pending, abort.signal); }
+              catch (error) { notified = false; await persist(); throw error; }
+            } else await server.notification({ method: "notifications/claude/channel", params: {
               content: pending.row.signal.body,
               meta: { signal_id: pending.row.signal.id, receipt: pending.receipt,
                 sender_id: pending.row.signal.from, sender_kind: pending.row.signal.from_kind,
