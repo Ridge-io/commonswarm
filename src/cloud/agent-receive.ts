@@ -203,6 +203,8 @@ export async function configureAgentReceive(options: {
   if (!(RECEIVE_MODES as readonly string[]).includes(options.mode)) throw new AgentSetupError("receive_mode_invalid", `--mode must be ${RECEIVE_MODES.join(" or ")}.`);
   const provider = options.provider ?? "instructions";
   if (!(RECEIVE_PROVIDERS as readonly string[]).includes(provider)) throw new AgentSetupError("receive_provider_invalid", `--provider must be ${RECEIVE_PROVIDERS.join(" or ")}.`);
+  if (options.grokBotAgentId !== undefined && !ONBOARDING_UUID.test(options.grokBotAgentId)) throw new AgentSetupError("grok_bot_agent_id_required", "Supply --grok-bot-agent-id with this Bot's agent UUID.");
+  if (options.grokBotAgentId !== undefined && provider !== "grok-bot") throw new AgentSetupError("grok_bot_agent_id_unsupported", "Use --grok-bot-agent-id only with --provider grok-bot.");
   const host = checkedHostSessionId(options.hostSessionId);
   if (provider !== "instructions" && host === "manual") throw new AgentSetupError("host_session_required", "A host hook needs this session's ID. Supply --host-session-id, or use --provider instructions for prompt-based turn checks.");
   if (options.mode === "wake" && !(RECEIVE_WAKE_PROVIDERS as readonly string[]).includes(provider)) throw new AgentSetupError("wake_host_unsupported", `Wake supports --provider ${RECEIVE_WAKE_PROVIDERS.join(" or ")}. Use --mode turn on this host.`);
@@ -279,7 +281,12 @@ export async function requestReceiveCanary(profile: string, host: string) {
   const next = await updateReceiveBinding(profile, host, binding => {
     if (binding.requested_mode !== "wake") throw new AgentSetupError("wake_not_selected", "Choose wake mode before testing it.");
     if (!receiveStatus(binding).channel_running) throw new AgentSetupError("channel_not_running", "Start this session's configured receive serve process before testing wakeups.");
-    return { ...binding, wake_verified_at: null, canary: { nonce: randomUUID(), requested_at: new Date().toISOString(), signal_id: null, emitted_while_idle: false, received_at: null } };
+    return {
+      ...binding,
+      wake_verified_at: null,
+      ...(binding.provider === "grok-bot" ? { idle: false, last_turn_ended_at: null } : {}),
+      canary: { nonce: randomUUID(), requested_at: new Date().toISOString(), signal_id: null, emitted_while_idle: false, received_at: null },
+    };
   });
   return { state: "pending", next_action: next.provider === "grok-bot" ? "End this Bot turn. From a separate terminal on this computer, run cswarm receive idle with this profile and host-session-id only after the chat is idle. After the woken session confirms the receipt, check cswarm receive status for wake_verified: true." : "End this turn so the session becomes idle. The channel will send a self-addressed test message. After this same session receives it, run cswarm receive status to confirm wake_verified is true.", host_session_id: next.host_session_id };
 }
