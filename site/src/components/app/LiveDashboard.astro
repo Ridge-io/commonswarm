@@ -3931,6 +3931,16 @@ import "../../styles/tokens.css";
         button.setAttribute("aria-checked", String(workspace.id === selected.id));
         const label = document.createElement("span");
         label.textContent = workspace.name;
+        /* The ID beside the name, because an agent names a workspace by id and a person names
+         * it by name, and the two have to be matchable by eye. An operator asked whether to add
+         * a bot to "the CommonSwarm Build workspace" and no agent surface could answer, because
+         * nothing printed both facts together. `cswarm whoami` now prints `Name (id)`; this is
+         * the other half of that pair. Muted and secondary so the name still reads first. */
+        const identifier = document.createElement("span");
+        identifier.className = "dashboard__workspace-id";
+        identifier.textContent = workspace.id;
+        identifier.title = workspace.id;
+        label.append(identifier);
         const check = document.createElement("span");
         check.className = "dashboard__workspace-check";
         check.textContent = "✓";
@@ -10553,6 +10563,17 @@ import "../../styles/tokens.css";
   .dashboard__workspace-button[aria-checked="true"] {
     color: var(--text);
     background: color-mix(in oklab, var(--text) 6%, transparent);
+  }
+
+  /* The workspace id, shown beside its name so a person can match what an agent prints.
+   * Secondary by weight and colour: the name is still what you read first. Its own line,
+   * because a uuid next to a short name wraps badly at the menu's width. */
+  .dashboard__workspace-id {
+    display: block;
+    font-family: var(--mono, ui-monospace, monospace);
+    font-size: 0.72rem;
+    color: var(--muted);
+    letter-spacing: 0;
   }
 
   .dashboard__workspace-check {

@@ -6,6 +6,17 @@ export const RECEIVE_PROVIDERS = ["claude", "codex", "instructions", "grok-bot"]
 export type ReceiveProvider = (typeof RECEIVE_PROVIDERS)[number];
 export const RECEIVE_WAKE_PROVIDER = "claude" as const;
 export const RECEIVE_WAKE_PROVIDERS = ["claude", "grok-bot"] as const;
+/**
+ * Verbs that accept `--profile`. Measured 2026-09-14 while closing item D: `whoami`, `members`,
+ * `inbox` and `feed` already accepted it; the item's brief said `status` and `members` did not,
+ * and `members` does.
+ *
+ * `status` is deliberately NOT here. D-062 records why `members` exists at all: `runStatus` is
+ * built on `humanCredential` throughout and speaks as "You:", and widening its gate "would move
+ * the failure deeper, not fix it". `--profile` expands to agent flags that its own shape gate
+ * rejects, so listing it would turn a clear refusal into a confusing one. The agent-side answer
+ * to "which workspace is this?" is `whoami` and `members`, and both now carry the name.
+ */
 export const AGENT_PROFILE_COMMANDS = [
   "whoami", "resume", "working-on", "note", "ask", "reply", "receipt",
   "feed", "inbox", "brain", "file", "members", "feedback", "listen", "session", "channel",
