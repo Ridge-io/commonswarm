@@ -385,7 +385,7 @@ test("the file-artifacts design doc cites objectSize symbol alone in file-artifa
 
 /* The refusal a user reads must name exactly what the check accepts. AGENTS.md: "An
  * enumeration inside a message must be generated, not typed." This gate is deliberately NOT
- * written against ALLOWED_EXTENSION_GROUPS — reading the same array the message is built from
+ * written against ALLOWED_TYPE_GROUPS — reading the same array the message is built from
  * would be a circular control that passes whatever the array says. It parses the extensions
  * OUT OF THE SHIPPED SENTENCE and runs each one through fileContentAllowed, the function the
  * edge actually calls. Measured defect it exists to catch: the typed sentence it replaced
@@ -407,7 +407,12 @@ test("every extension the refusal names is accepted, and named-absent ones are r
 
   const named = [...FILE_TYPE_REFUSED_MESSAGE.matchAll(/(?<![A-Za-z0-9])\.([A-Za-z0-9.]+)/g)]
     .map((match) => match[1]!.toLowerCase());
-  assert.ok(named.length >= 20, `the refusal names only ${named.length} extensions: ${FILE_TYPE_REFUSED_MESSAGE}`);
+  /* A sanity floor only — it proves the sentence was parsed, not that the allowlist is intact.
+   * This test compares two renderings that both come from ALLOWED_TYPE_GROUPS, so dropping an
+   * extension from that array leaves them agreeing and keeps this green. What catches a silent
+   * narrowing is the pair of gates at the end of this file, which bind the array to the
+   * enumerations published in SWARM-CLOUD.md 2.8 and in the file-artifacts design doc. */
+  assert.ok(named.length >= 10, `the refusal names only ${named.length} extensions: ${FILE_TYPE_REFUSED_MESSAGE}`);
 
   // The historical defect was a message naming a SUBSET of what the check accepts: .html, .htm
   // and .yml were accepted and unnamed, so the loop below — which only proves named ⊆ accepted —
@@ -419,7 +424,7 @@ test("every extension the refusal names is accepted, and named-absent ones are r
     .split("|")
     .map((alternative) => alternative.replace(/\\\./g, ".").toLowerCase());
   assert.ok(
-    accepted.length >= 20,
+    accepted.length >= 10,
     `could not parse the extension allowlist out of ALLOWED_EXTENSION_RE: ${ALLOWED_EXTENSION_RE.source}`,
   );
   assert.deepEqual(
@@ -460,9 +465,19 @@ test("the file_type_refused site passes the generated constant, not a literal", 
     /"file_type_refused",\s*\n\s*FILE_TYPE_REFUSED_MESSAGE,/,
     "file_type_refused no longer passes FILE_TYPE_REFUSED_MESSAGE; a typed sentence has come back",
   );
-  assert.ok(
-    /export const FILE_TYPE_REFUSED_MESSAGE =\s*\n?\s*`/.test(edge),
-    "FILE_TYPE_REFUSED_MESSAGE is no longer a template built from the allowlist groups",
+  const template = /export const FILE_TYPE_REFUSED_MESSAGE =([\s\S]*?);\n/.exec(edge)?.[1];
+  assert.ok(template, "FILE_TYPE_REFUSED_MESSAGE is no longer declared in file-artifacts.ts");
+  // A backtick alone is not proof of generation: a hand-written backtick string passes that.
+  // The template must READ the groups for both halves it publishes.
+  assert.match(
+    template!,
+    /ALLOWED_TYPE_GROUPS[\s\S]*group\.extensions/,
+    "FILE_TYPE_REFUSED_MESSAGE no longer builds its extension list from ALLOWED_TYPE_GROUPS",
+  );
+  assert.match(
+    template!,
+    /group\.contentTypes/,
+    "FILE_TYPE_REFUSED_MESSAGE no longer builds its content-type list from ALLOWED_TYPE_GROUPS",
   );
 });
 
@@ -566,4 +581,221 @@ test("acceptable-use describes the rows the byte quota actually sums", () => {
     !/GB of unpurged versions/.test(page),
     "the retired wording 'GB of unpurged versions' is back; a pending row past the window is unpurged and uncounted",
   );
+});
+
+/* The content-type half of the refusal, held to ALLOWED_CONTENT_TYPE_RE the same way the
+ * extension half is: the named set is parsed out of the SHIPPED SENTENCE and checked against
+ * the regex's own source and against fileContentAllowed. The first attempt at this sentence
+ * said "an application type for those documents and archives", which is false —
+ * application/json and the two YAML types are accepted and are neither. */
+test("every content type the refusal names is accepted, and the set matches the regex", async () => {
+  const edgeModule = "../../supabase/functions/command/file-artifacts.ts";
+  const { FILE_TYPE_REFUSED_MESSAGE, fileContentAllowed } = (await import(edgeModule)) as {
+    FILE_TYPE_REFUSED_MESSAGE: string;
+    fileContentAllowed: (name: string, contentType: string) => boolean;
+  };
+  const edge = read("supabase/functions/command/file-artifacts.ts");
+
+  const named = [...FILE_TYPE_REFUSED_MESSAGE.matchAll(/content types: (.+)/g)]
+    .flatMap((match) => match[1]!.split(",").map((entry) => entry.trim()));
+  assert.ok(named.length >= 15, `the refusal names only ${named.length} content types`);
+
+  // Behavioural half: a named type on an allowed extension must be accepted. `.md` is in the
+  // text group, so the extension never decides these cases.
+  for (const contentType of named) {
+    const probe = contentType === "text/*" ? "text/markdown" : contentType;
+    assert.equal(
+      fileContentAllowed("plan.md", probe),
+      true,
+      `the refusal names ${contentType} as allowed, but fileContentAllowed refuses it`,
+    );
+  }
+
+  // Negative control on the same invocation: types the sentence does NOT name must be refused,
+  // so the loop above cannot pass vacuously.
+  for (const contentType of [
+    "application/octet-stream",
+    "application/x-sh",
+    "application/xml",
+    "image/tiff",
+    "video/mp4",
+    "application/vnd.openxmlformats-officedocument.drawingml.chart",
+  ]) {
+    assert.ok(!named.includes(contentType), `this negative control is stale: ${contentType} is now named`);
+    assert.equal(
+      fileContentAllowed("plan.md", contentType),
+      false,
+      `${contentType} is not named in the refusal but fileContentAllowed accepts it`,
+    );
+  }
+
+  // Set half: everything the regex source enumerates must be named. This is what catches a type
+  // that is accepted and unnamed — the direction the behavioural loop above cannot see.
+  const source = /const ALLOWED_CONTENT_TYPE_RE =\s*\n?\s*\/\^(.+)\$\/;/.exec(edge)?.[1];
+  assert.ok(source, "ALLOWED_CONTENT_TYPE_RE is no longer a literal regex in file-artifacts.ts");
+  const enumerated = ["application", "image"].flatMap((prefix) => {
+    const opener = `${prefix}\\/(`;
+    const at = source!.indexOf(opener);
+    assert.ok(at >= 0, `ALLOWED_CONTENT_TYPE_RE no longer has a ${prefix}/ group`);
+    const body = balancedGroup(source!, at + opener.length - 1);
+    return expandAlternation(body).map((leaf) => `${prefix}/${leaf}`);
+  });
+  assert.ok(
+    enumerated.length >= 12,
+    `could not enumerate ALLOWED_CONTENT_TYPE_RE: parsed ${enumerated.length} from ${source}`,
+  );
+  assert.ok(
+    /text\\\/\[a-z0-9\.\+-\]\+/.test(source!),
+    "ALLOWED_CONTENT_TYPE_RE no longer accepts every text/ subtype; the refusal still prints text/*",
+  );
+
+  const namedLeaves = new Set(named.filter((entry) => entry !== "text/*"));
+  for (const contentType of enumerated) {
+    assert.ok(
+      namedLeaves.has(contentType),
+      `ALLOWED_CONTENT_TYPE_RE accepts ${contentType} but the refusal does not name it`,
+    );
+  }
+  assert.deepEqual(
+    [...namedLeaves].sort(),
+    [...new Set(enumerated)].sort(),
+    "the content types the refusal names and the ones the regex accepts are not the same set",
+  );
+});
+
+/* Returns the contents of the parenthesised group that OPENS at `open`, matching parentheses by
+ * depth. Parsing a regex with a regex is what produced an unbalanced body on the first attempt. */
+function balancedGroup(source: string, open: number): string {
+  assert.equal(source[open], "(", `expected a group at index ${open} of ${source}`);
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    if (source[index] === "(") depth += 1;
+    else if (source[index] === ")") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open + 1, index);
+    }
+  }
+  throw new Error(`unbalanced group from index ${open} in ${source}`);
+}
+
+/* Unescapes the regex-literal escapes the allowlist uses, and refuses anything else so a future
+ * metacharacter cannot be silently turned into a literal. */
+function unescapeLiteral(part: string): string {
+  const escapes = [...part.matchAll(/\\(.)/g)].map((match) => match[1]!);
+  for (const escaped of escapes) {
+    assert.ok(
+      ".+/".includes(escaped),
+      `ALLOWED_CONTENT_TYPE_RE now escapes \\${escaped}; this parser only understands \\. \\+ and \\/`,
+    );
+  }
+  return part.replace(/\\([.+/])/g, "$1");
+}
+
+/* Expands a regex alternation body, including one level of nesting, into its leaf strings.
+ * `(pdf|json|vnd\.x\.(a|b))` -> ["pdf", "json", "vnd.x.a", "vnd.x.b"]. */
+function expandAlternation(body: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let current = "";
+  const parts: string[] = [];
+  for (const character of body) {
+    if (character === "(") depth += 1;
+    if (character === ")") depth -= 1;
+    if (character === "|" && depth === 0) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  parts.push(current);
+  for (const part of parts) {
+    const nested = /^(.*?)\(([^)]*)\)$/.exec(part);
+    if (nested) {
+      for (const leaf of expandAlternation(nested[2]!)) {
+        out.push(unescapeLiteral(nested[1]!) + leaf);
+      }
+    } else {
+      out.push(unescapeLiteral(part));
+    }
+  }
+  return out;
+}
+
+/* The independent pin for the allowlist itself (Codex, round 2): the gates above compare two
+ * renderings that both come from ALLOWED_TYPE_GROUPS, so dropping an extension from that array
+ * keeps them green while silently narrowing what the service accepts. SWARM-CLOUD.md §2.8 is a
+ * separate artifact, written by hand and reviewed as spec, so binding the code to IT means a
+ * narrowing has to be made deliberately in both places. */
+test("the extension allowlist matches the enumeration published in SWARM-CLOUD.md 2.8", () => {
+  const doc = read("docs/design/SWARM-CLOUD.md");
+  const edge = read("supabase/functions/command/file-artifacts.ts");
+
+  const section = /checked together for text \(([\s\S]*?)\), and archives \(([^)]*)\)/.exec(doc);
+  assert.ok(section, "SWARM-CLOUD.md 2.8 no longer enumerates the extension allowlist");
+  const published = [...section![0].matchAll(/`\.([a-z0-9.]+)`/g)].map((match) => match[1]!);
+  assert.ok(published.length >= 20, `parsed only ${published.length} extensions from SWARM-CLOUD.md 2.8`);
+
+  const groups = /const ALLOWED_TYPE_GROUPS = \[([\s\S]*?)\n\] as const;/.exec(edge)?.[1];
+  assert.ok(groups, "ALLOWED_TYPE_GROUPS is no longer a literal array in file-artifacts.ts");
+  const enforced = [...groups!.matchAll(/extensions: \[([^\]]*)\]/g)]
+    .flatMap((match) => [...match[1]!.matchAll(/"([a-z0-9.]+)"/g)].map((entry) => entry[1]!));
+
+  assert.deepEqual(
+    [...new Set(published)].sort(),
+    [...new Set(enforced)].sort(),
+    "SWARM-CLOUD.md 2.8 and ALLOWED_TYPE_GROUPS enumerate different extension sets",
+  );
+});
+
+/* Same sweep, second surface. The design doc's 5 listed the extensions too and omitted .yml,
+ * so its "Everything else ... is refused" sentence was false for a type the service accepts.
+ * A copy fix must reach every surface in the claim family, not just the one that was reported. */
+test("the file-artifacts design doc enumerates the same extension allowlist", () => {
+  const doc = read("docs/design/2026-08-18-FILE-ARTIFACTS.md");
+  const edge = read("supabase/functions/command/file-artifacts.ts");
+
+  const section = /^Allowlist\. The declared content type and the filename extension([\s\S]*?)refused with the list\./m.exec(doc);
+  assert.ok(section, "the design doc 5 no longer enumerates the extension allowlist");
+  const published = [...section![1]!.matchAll(/`\.([a-z0-9.]+)`/g)].map((match) => match[1]!);
+
+  const groups = /const ALLOWED_TYPE_GROUPS = \[([\s\S]*?)\n\] as const;/.exec(edge)?.[1];
+  assert.ok(groups, "ALLOWED_TYPE_GROUPS is no longer a literal array in file-artifacts.ts");
+  const enforced = [...groups!.matchAll(/extensions: \[([^\]]*)\]/g)]
+    .flatMap((match) => [...match[1]!.matchAll(/"([a-z0-9.]+)"/g)].map((entry) => entry[1]!));
+
+  assert.deepEqual(
+    [...new Set(published)].sort(),
+    [...new Set(enforced)].sort(),
+    "the design doc 5 and ALLOWED_TYPE_GROUPS enumerate different extension sets",
+  );
+});
+
+/* The refusal's own framing makes two claims beyond the lists: that the groups need not match,
+ * and that `text/*` means a LOWERCASE subtype. Both are claims about behaviour, so both get a
+ * control — a true sentence with nothing holding it is how this paragraph drifted before. */
+test("the refusal's framing claims hold against fileContentAllowed", async () => {
+  const edgeModule = "../../supabase/functions/command/file-artifacts.ts";
+  const { FILE_TYPE_REFUSED_MESSAGE, fileContentAllowed } = (await import(edgeModule)) as {
+    FILE_TYPE_REFUSED_MESSAGE: string;
+    fileContentAllowed: (name: string, contentType: string) => boolean;
+  };
+
+  assert.match(
+    FILE_TYPE_REFUSED_MESSAGE,
+    /any listed extension may carry any listed content type/,
+    "the refusal no longer says the groups need not match",
+  );
+  // An image extension with a text-group content type: accepted, because the two halves are
+  // independent. If this ever became false, the sentence above would be a lie.
+  assert.equal(fileContentAllowed("plan.png", "application/json"), true);
+  assert.equal(fileContentAllowed("plan.md", "image/png"), true);
+
+  assert.match(
+    FILE_TYPE_REFUSED_MESSAGE,
+    /text\/\* means any lowercase text subtype/,
+    "the refusal no longer qualifies text/* as lowercase",
+  );
+  assert.equal(fileContentAllowed("plan.md", "text/html"), true);
+  assert.equal(fileContentAllowed("plan.md", "text/HTML"), false, "text/* is no longer lowercase-only");
 });

@@ -120,10 +120,12 @@ pending row back, not a second one.
 
 ## 5. Content types
 
-Allowlist, checked against the declared content type and the filename extension together:
-text (`text/*`, `.md`, `.txt`, `.csv`, `.html`, `.htm`, `.json`, `.yaml`), documents (`.pdf`, `.docx`,
-`.xlsx`, `.pptx`), images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`), archives
-(`.zip`, `.tar.gz`). Everything else — executables, scripts, dylibs, unknown binaries — is
+Allowlist. The declared content type and the filename extension are checked INDEPENDENTLY and
+both must pass, so the groups below are for reading: any listed extension may carry any listed
+content type.
+text (`text/*`, `.md`, `.txt`, `.csv`, `.html`, `.htm`, `.json`, `.yaml`, `.yml`), documents
+(`.pdf`, `.docx`, `.xlsx`, `.pptx`), images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`),
+archives (`.zip`, `.tar.gz`). Everything else — executables, scripts, dylibs, unknown binaries — is
 refused with the list.
 
 Two supporting rules:

@@ -117,22 +117,57 @@ const ALLOWED_CONTENT_TYPE_RE =
   /^(text\/[a-z0-9.+-]+|application\/(pdf|json|x-yaml|yaml|zip|gzip|x-gzip|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation))|image\/(png|jpeg|gif|webp|svg\+xml))$/;
 
 /**
- * The extension allowlist, grouped, so the refusal a user reads is BUILT from the same
- * source `fileContentAllowed` tests against. AGENTS.md: "An enumeration inside a message
- * must be generated, not typed." Measured: the typed sentence this replaces omitted
- * `.html`, `.htm` and `.yml`, which the check has always accepted, so three valid
- * uploads were refused by a message that called them disallowed.
+ * The allowlist, grouped, so the refusal a user reads is BUILT from the same source the
+ * check tests against. AGENTS.md: "An enumeration inside a message must be generated, not
+ * typed." Measured twice on this lane: the typed sentence this replaces omitted `.html`,
+ * `.htm` and `.yml` from the extensions, and a first attempt at the content-type half said
+ * "an application type for those documents and archives", which is false — `application/json`
+ * and the two YAML types are accepted and are neither.
+ *
+ * `contentTypes` describes ALLOWED_CONTENT_TYPE_RE; it does not build it. The regex below
+ * stays the single enforcement, so no widening can slip in through a message. The two are
+ * held together by gates in tests/p1-cli/file-create-rate-limit.test.ts, which parse the
+ * regex's own source and probe fileContentAllowed with every named type and with near
+ * misses.
  */
-const ALLOWED_EXTENSION_GROUPS = [
-  { label: "text", extensions: ["md", "txt", "csv", "html", "htm", "json", "yaml", "yml"] },
-  { label: "documents", extensions: ["pdf", "docx", "xlsx", "pptx"] },
-  { label: "images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] },
-  { label: "archives", extensions: ["zip", "tar.gz"] },
+const TEXT_SUBTYPE_WILDCARD = "text/*";
+
+const ALLOWED_TYPE_GROUPS = [
+  {
+    label: "text",
+    extensions: ["md", "txt", "csv", "html", "htm", "json", "yaml", "yml"],
+    contentTypes: [
+      TEXT_SUBTYPE_WILDCARD,
+      "application/json",
+      "application/yaml",
+      "application/x-yaml",
+    ],
+  },
+  {
+    label: "documents",
+    extensions: ["pdf", "docx", "xlsx", "pptx"],
+    contentTypes: [
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ],
+  },
+  {
+    label: "images",
+    extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"],
+    contentTypes: ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"],
+  },
+  {
+    label: "archives",
+    extensions: ["zip", "tar.gz"],
+    contentTypes: ["application/zip", "application/gzip", "application/x-gzip"],
+  },
 ] as const;
 
 export const ALLOWED_EXTENSION_RE = new RegExp(
   `\\.(?:${
-    ALLOWED_EXTENSION_GROUPS.flatMap((group) => group.extensions)
+    ALLOWED_TYPE_GROUPS.flatMap((group) => group.extensions)
       .map((extension) => extension.replace(/\./g, "\\."))
       .join("|")
   })$`,
@@ -140,19 +175,21 @@ export const ALLOWED_EXTENSION_RE = new RegExp(
 );
 
 /**
- * The refusal a user reads when the name or the declared type is off the allowlist.
- * The extension half is generated from ALLOWED_EXTENSION_GROUPS above; the content-type
- * half is described rather than enumerated, because ALLOWED_CONTENT_TYPE_RE accepts every
- * `text/*` subtype and so has no finite list to print.
+ * The refusal a user reads when the name or the declared type is off the allowlist. Both
+ * halves are generated from ALLOWED_TYPE_GROUPS, so neither can name a set the check does
+ * not enforce. `text/*` is printed as a wildcard because ALLOWED_CONTENT_TYPE_RE really does
+ * accept every `text/` subtype; every other accepted type is finite and is named in full.
  */
 export const FILE_TYPE_REFUSED_MESSAGE =
-  `this name or content type is not on the allowlist: the filename extension must be one of ${
-    ALLOWED_EXTENSION_GROUPS
+  `this name or content type is not on the allowlist. The filename extension and the declared content type are checked separately, so each must be on the list below and the groups do not have to match: any listed extension may carry any listed content type. text/* means any lowercase text subtype.\n${
+    ALLOWED_TYPE_GROUPS
       .map((group) =>
-        `${group.label} (${group.extensions.map((extension) => `.${extension}`).join(" ")})`
+        `  ${group.label}\n    extensions: ${
+          group.extensions.map((extension) => `.${extension}`).join(" ")
+        }\n    content types: ${group.contentTypes.join(", ")}`
       )
-      .join(", ")
-  }, and the declared content type must be text/*, an application type for those documents and archives, or one of the image types above`;
+      .join("\n")
+  }`;
 
 export interface FileVersionCreateCommand {
   kind: typeof FILE_VERSION_CREATE_KIND;
