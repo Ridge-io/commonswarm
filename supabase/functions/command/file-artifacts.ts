@@ -177,11 +177,17 @@ export const ALLOWED_EXTENSION_RE = new RegExp(
 /**
  * The refusal a user reads when the name or the declared type is off the allowlist. Both
  * halves are generated from ALLOWED_TYPE_GROUPS, so neither can name a set the check does
- * not enforce. `text/*` is printed as a wildcard because ALLOWED_CONTENT_TYPE_RE really does
- * accept every `text/` subtype; every other accepted type is finite and is named in full.
+ * not enforce. `text/*` is printed as a wildcard because ALLOWED_CONTENT_TYPE_RE takes any
+ * subtype matching `[a-z0-9.+-]+`; every other accepted type is finite and is named in full.
+ *
+ * That class is NARROWER than "any text subtype". The regex is anchored and the class carries
+ * no `_` and no uppercase, so `text/plain` passes while `text/plain; charset=utf-8`,
+ * `TEXT/plain` and `text/x_custom` are all refused. The message says so, because a parameter
+ * is the spelling a third-party client is most likely to send. Tolerating parameters would
+ * change what the service accepts, so it is filed as its own item rather than done here.
  */
 export const FILE_TYPE_REFUSED_MESSAGE =
-  `this name or content type is not on the allowlist. The filename extension and the declared content type are checked separately, so each must be on the list below and the groups do not have to match: any listed extension may carry any listed content type. text/* means any lowercase text subtype.\n${
+  `this name or content type is not on the allowlist. The filename extension and the declared content type are checked separately, so each must be on the list below and the groups do not have to match: any listed extension may carry any listed content type. Send the content type bare, with no parameters: text/plain is accepted, text/plain; charset=utf-8 is not. text/* means text/ followed by lowercase letters, digits, dot, plus or hyphen.\n${
     ALLOWED_TYPE_GROUPS
       .map((group) =>
         `  ${group.label}\n    extensions: ${

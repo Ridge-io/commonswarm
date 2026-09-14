@@ -791,11 +791,33 @@ test("the refusal's framing claims hold against fileContentAllowed", async () =>
   assert.equal(fileContentAllowed("plan.png", "application/json"), true);
   assert.equal(fileContentAllowed("plan.md", "image/png"), true);
 
+  /* `text/*` is printed as a wildcard, so the message has to say how wide it really is. The
+   * regex class is [a-z0-9.+-]+ and the pattern is anchored, which is NARROWER than "any text
+   * subtype": no uppercase, no underscore, and no parameter. A Grok arm caught the earlier
+   * wording ("any lowercase text subtype") claiming the parameter case. */
   assert.match(
     FILE_TYPE_REFUSED_MESSAGE,
-    /text\/\* means any lowercase text subtype/,
-    "the refusal no longer qualifies text/* as lowercase",
+    /Send the content type bare, with no parameters: text\/plain is accepted, text\/plain; charset=utf-8 is not/,
+    "the refusal no longer warns that a content-type parameter is refused",
+  );
+  assert.match(
+    FILE_TYPE_REFUSED_MESSAGE,
+    /text\/\* means text\/ followed by lowercase letters, digits, dot, plus or hyphen/,
+    "the refusal no longer states the text/ subtype class",
   );
   assert.equal(fileContentAllowed("plan.md", "text/html"), true);
+  assert.equal(fileContentAllowed("plan.md", "text/vnd.curl"), true, "dots are in the subtype class");
+  assert.equal(fileContentAllowed("plan.md", "text/x-yaml"), true, "hyphens are in the subtype class");
   assert.equal(fileContentAllowed("plan.md", "text/HTML"), false, "text/* is no longer lowercase-only");
+  assert.equal(fileContentAllowed("plan.md", "text/x_custom"), false, "underscores are no longer refused");
+  assert.equal(
+    fileContentAllowed("plan.md", "text/plain; charset=utf-8"),
+    false,
+    "a content-type parameter is no longer refused; the message still tells users to send it bare",
+  );
+  assert.equal(
+    fileContentAllowed("plan.md", "application/json; charset=utf-8"),
+    false,
+    "a parameter is refused on text/ but not on application/; the message speaks for both",
+  );
 });
