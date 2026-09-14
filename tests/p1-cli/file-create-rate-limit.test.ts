@@ -840,6 +840,31 @@ test("the file-artifacts design doc enumerates the same extension allowlist", ()
     [...new Set(enforced)].sort(),
     "the design doc 5 and ALLOWED_TYPE_GROUPS enumerate different extension sets",
   );
+
+  /* The section is titled "Content types" and names them, but this gate read only the `.ext`
+   * leaves — so every MIME type could vanish from the spec with the test still green. A Grok arm
+   * caught the half-bound paragraph. Bind the types too. */
+  const textPattern = /const TEXT_SUBTYPE_PATTERN = "([^"]+)";/.exec(edge)?.[1];
+  assert.ok(textPattern, "TEXT_SUBTYPE_PATTERN is no longer a string constant");
+  const publishedTypes = new Set(
+    [...section![1]!.matchAll(/`((?:text|image|application)\/[^`]+)`/g)].map((match) => match[1]!),
+  );
+  const enforcedTypes = new Set(
+    [...groups!.matchAll(/contentTypes: \[([^\]]*)\]/g)]
+      .flatMap((match) =>
+        [...match[1]!.matchAll(/"([^"]+)"|(TEXT_SUBTYPE_PATTERN)/g)]
+          .map((entry) => entry[1] ?? textPattern!)
+      ),
+  );
+  // The spec spells the wildcard as `text/<subtype>`; map it to the enforced pattern.
+  const normalised = new Set(
+    [...publishedTypes].map((entry) => entry === "text/<subtype>" ? textPattern! : entry),
+  );
+  assert.deepEqual(
+    [...normalised].sort(),
+    [...enforcedTypes].sort(),
+    "the design doc 5 and ALLOWED_TYPE_GROUPS enumerate different content-type sets",
+  );
 });
 
 /* The refusal's own framing makes two claims beyond the lists: that the groups need not match,
@@ -1073,4 +1098,96 @@ test("the CLI sanitises the refusal's wire fields before they reach the terminal
   assert.ok(cleaned.startsWith("identity"), `the sanitiser mangled the legitimate prefix: ${JSON.stringify(cleaned)}`);
   // Positive control on the same invocation: an ordinary value passes through untouched.
   assert.equal(sanitize("workspace"), "workspace");
+});
+
+/* THE LIST MOST USERS SEE IS NOT THE SERVER'S. `cswarm file put` refuses a bad name LOCALLY,
+ * before any request, with `the workspace accepts ${allowedExtensionList()}` — built from the
+ * hand-typed CONTENT_TYPES map in src/cloud/files.ts. The web app carries a third copy in
+ * site/src/lib/commonswarm.ts. A Grok arm found that the generated server refusal this lane
+ * spent four rounds on is the surface a CLI user reaches LAST, and that nothing held the three
+ * copies together: they agreed only by hand. The extension allowlist is a published product
+ * commitment, so bind all three to each other. */
+test("the server, the CLI and the web app publish the same extension allowlist", () => {
+  const extensionsFrom = (source: string, pattern: RegExp, leaf: RegExp): Set<string> => {
+    const block = pattern.exec(source)?.[1];
+    assert.ok(block, `could not find the allowlist block with ${pattern}`);
+    return new Set([...block!.matchAll(leaf)].map((match) => match[1]!.toLowerCase()));
+  };
+
+  const groups = /const ALLOWED_TYPE_GROUPS = \[([\s\S]*?)\n\] as const;/.exec(
+    read("supabase/functions/command/file-artifacts.ts"),
+  )?.[1];
+  assert.ok(groups, "ALLOWED_TYPE_GROUPS is no longer a literal array");
+  const server = new Set(
+    [...groups!.matchAll(/extensions: \[([^\]]*)\]/g)]
+      .flatMap((match) => [...match[1]!.matchAll(/"([a-z0-9.]+)"/g)].map((entry) => entry[1]!)),
+  );
+  assert.ok(server.size >= 10, `parsed only ${server.size} server extensions`);
+
+  const cli = extensionsFrom(
+    read("src/cloud/files.ts"),
+    /const CONTENT_TYPES: ReadonlyMap<string, string> = new Map\(\[([\s\S]*?)\n\]\);/,
+    /\["\.([a-z0-9.]+)",/g,
+  );
+  const browser = extensionsFrom(
+    read("site/src/lib/commonswarm.ts"),
+    /BROWSER_ATTACHMENT_CONTENT_TYPES: ReadonlyArray<readonly \[string, string\]> = \[([\s\S]*?)\n\];/,
+    /\["\.([a-z0-9.]+)",/g,
+  );
+
+  assert.deepEqual(
+    [...cli].sort(),
+    [...server].sort(),
+    "src/cloud/files.ts CONTENT_TYPES and the server allowlist are different sets; the CLI refuses a name locally and prints ITS list, so a user would be told the wrong thing",
+  );
+  assert.deepEqual(
+    [...browser].sort(),
+    [...server].sort(),
+    "site/src/lib/commonswarm.ts BROWSER_ATTACHMENT_CONTENT_TYPES and the server allowlist are different sets",
+  );
+});
+
+/* "Case does not matter" was probed only for content_type, which validateFileCommand lowercases.
+ * The NAME is stored as typed; extension case-insensitivity rests entirely on the "i" flag of
+ * ALLOWED_EXTENSION_RE. A Grok arm measured that deleting that flag left the whole suite green
+ * while `cswarm file put Plan.MD` would be refused by a message promising case does not matter. */
+test("an upper-case extension is accepted on the path a user actually takes", async () => {
+  const edgeModule = "../../supabase/functions/command/file-artifacts.ts";
+  const { fileContentAllowed, validateFileCommand, ALLOWED_EXTENSION_RE } =
+    (await import(edgeModule)) as {
+      fileContentAllowed: (name: string, contentType: string) => boolean;
+      validateFileCommand: (
+        cmd: Record<string, unknown>,
+      ) => { ok: true; command: unknown } | { ok: false };
+      ALLOWED_EXTENSION_RE: RegExp;
+    };
+
+  assert.ok(
+    ALLOWED_EXTENSION_RE.flags.includes("i"),
+    "ALLOWED_EXTENSION_RE lost its case-insensitive flag; the refusal still says case does not matter",
+  );
+
+  const accepts = (name: string, contentType: string): boolean => {
+    const validated = validateFileCommand({
+      kind: "file_version_create",
+      file_id: "3f1d4c6a-0000-4000-8000-000000000003",
+      version_id: "3f1d4c6a-0000-4000-8000-000000000004",
+      name,
+      declared_size_bytes: 16,
+      content_type: contentType,
+    });
+    if (!validated.ok) return false;
+    const command = validated.command as { name: string; content_type: string };
+    // The name is stored AS TYPED — assert that, so a future lowercasing is noticed here.
+    assert.equal(command.name, name, "validateFileCommand now rewrites the file name");
+    return fileContentAllowed(command.name, command.content_type);
+  };
+
+  for (const name of ["Plan.MD", "PLAN.MD", "plan.Md", "Report.PDF", "IMAGE.PNG", "a.TAR.GZ"]) {
+    assert.equal(accepts(name, "text/plain"), true, `${name} is refused though the refusal says case does not matter`);
+  }
+  // Negative control on the same invocation: case-insensitivity must not accept a bad extension.
+  for (const name of ["Plan.EXE", "script.SH", "archive.TAR"]) {
+    assert.equal(accepts(name, "text/plain"), false, `${name} is accepted; the extension allowlist is not being applied`);
+  }
 });

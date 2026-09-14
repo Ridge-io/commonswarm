@@ -125,12 +125,19 @@ pending row back, not a second one.
 Allowlist. The declared content type and the filename extension are checked INDEPENDENTLY and
 both must pass, so the groups below are for reading: any listed extension may carry any listed
 content type.
-text (`text/<subtype>` where the subtype matches `[a-z0-9.+-]+`, plus `application/json`,
-`application/yaml` and `application/x-yaml`; extensions `.md`, `.txt`, `.csv`, `.html`, `.htm`,
-`.json`, `.yaml`, `.yml`), documents
-(`.pdf`, `.docx`, `.xlsx`, `.pptx`), images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`),
-archives (`.zip`, `.tar.gz`). Everything else — executables, scripts, dylibs, unknown binaries — is
-refused with the list.
+- **text** — extensions `.md`, `.txt`, `.csv`, `.html`, `.htm`, `.json`, `.yaml`, `.yml`; types
+  `text/<subtype>` where the subtype matches `[a-z0-9.+-]+`, `application/json`,
+  `application/yaml`, `application/x-yaml`.
+- **documents** — extensions `.pdf`, `.docx`, `.xlsx`, `.pptx`; types `application/pdf`,
+  `application/vnd.openxmlformats-officedocument.wordprocessingml.document`,
+  `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+  `application/vnd.openxmlformats-officedocument.presentationml.presentation`.
+- **images** — extensions `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`; types `image/png`,
+  `image/jpeg`, `image/gif`, `image/webp`, `image/svg+xml`.
+- **archives** — extensions `.zip`, `.tar.gz`; types `application/zip`, `application/gzip`,
+  `application/x-gzip`.
+
+Everything else — executables, scripts, dylibs, unknown binaries — is refused with the list.
 
 The type is matched whole and anchored, so a media-type PARAMETER is refused: `text/plain` passes
 and `text/plain; charset=utf-8` does not, on every type and not only text. `validateFileCommand`
