@@ -86,7 +86,7 @@ export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 600;
 // brain migration).
 //
 // It bounds the worst case that had no workspace-scoped ceiling before this constant existed
-// (FREE_TIER_MEMBER_LIMIT 25 + FREE_TIER_PRINCIPAL_LIMIT 50 = 75 identities x 600 = 45,000) by 22x.
+// (FREE_TIER_MEMBER_LIMIT 25 + FREE_TIER_PRINCIPAL_LIMIT 50 = 75 identities x 600 = 45,000) by at least 22x.
 //
 // The ceiling bounds a workspace's total creates per hour. Before it, only the per-identity cap
 // applied, so a workspace had no ceiling of its own.
@@ -180,14 +180,19 @@ export const ALLOWED_EXTENSION_RE = new RegExp(
  * not enforce. `text/*` is printed as a wildcard because ALLOWED_CONTENT_TYPE_RE takes any
  * subtype matching `[a-z0-9.+-]+`; every other accepted type is finite and is named in full.
  *
- * That class is NARROWER than "any text subtype". The regex is anchored and the class carries
- * no `_` and no uppercase, so `text/plain` passes while `text/plain; charset=utf-8`,
- * `TEXT/plain` and `text/x_custom` are all refused. The message says so, because a parameter
- * is the spelling a third-party client is most likely to send. Tolerating parameters would
- * change what the service accepts, so it is filed as its own item rather than done here.
+ * That class is NARROWER than "any text subtype": it is anchored and carries no `_`, so
+ * `text/plain` passes while `text/plain; charset=utf-8` and `text/x_custom` are refused.
+ *
+ * CASE IS NOT PART OF IT. `validateFileCommand` lowercases `content_type` before any check,
+ * so `TEXT/PLAIN` is accepted on the real request path — measured on production. The regex
+ * alone refuses it, which is why a control that calls `fileContentAllowed` directly proves
+ * nothing about what a user may send. The message therefore warns about the PARAMETER, which
+ * survives lowercasing and is the spelling a third-party client is most likely to send, and
+ * says nothing about case. Tolerating parameters would change what the service accepts, so
+ * it is filed as its own item rather than done here.
  */
 export const FILE_TYPE_REFUSED_MESSAGE =
-  `this name or content type is not on the allowlist. The filename extension and the declared content type are checked separately, so each must be on the list below and the groups do not have to match: any listed extension may carry any listed content type. Send the content type bare, with no parameters: text/plain is accepted, text/plain; charset=utf-8 is not. text/* means text/ followed by lowercase letters, digits, dot, plus or hyphen.\n${
+  `this name or content type is not on the allowlist. The filename extension and the declared content type are checked separately, so each must be on the list below and the groups do not have to match: any listed extension may carry any listed content type. Send the content type bare, with no parameters: text/plain is accepted, text/plain; charset=utf-8 is not. Case does not matter. text/* means text/ followed by letters, digits, dot, plus or hyphen.\n${
     ALLOWED_TYPE_GROUPS
       .map((group) =>
         `  ${group.label}\n    extensions: ${

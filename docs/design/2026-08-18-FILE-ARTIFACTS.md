@@ -73,14 +73,16 @@ paste into a signal. `rm` states the restore window and its end date.
 
 ## 4. Storage layout, quotas, limits
 
-Backend: **Supabase Storage** (already in the project, currently unused), one private bucket
+Backend: **Supabase Storage**, one private bucket
 `swarm-files`, object path `<workspace_id>/<file_id>/<version_n>`. Postgres (`swarm.` schema)
 is the authority; the bucket is a blob store that nothing trusts on its own — the durable
 row, not the object, decides what exists (durable-by-default doctrine).
 
-Proposed caps, all enforced server-side. Most are checked at version-create time; the per-version
-BYTE cap and a brain topic's live-version retirement are settled at COMMIT, because the real object
-size is only known once the bytes are there (`file-artifacts.ts`, `objectSize` at commit):
+Caps, all enforced server-side. Most are checked at version-create time. The per-version BYTE cap is
+enforced TWICE: the bucket's `file_size_limit` refuses an oversize object during the signed upload,
+and at COMMIT `objectSize` refuses an object larger than the version declared. A brain topic's
+live-version retirement is settled at commit for the same reason — the real object size is only
+known once the bytes are there (`file-artifacts.ts`, `objectSize` at commit):
 
 | cap | value | why |
 |---|---|---|
@@ -88,7 +90,7 @@ size is only known once the bytes are there (`file-artifacts.ts`, `objectSize` a
 | per-workspace total | 1 GB | ~40× the per-file cap; a coordination store, not a drive. Free-tier arithmetic: 10 workspaces per account stays bounded |
 | per-workspace file count | 500 names; normal files keep 20 live or in-flight versions per name; brain topics keep a rolling 20 live versions | keeps `file ls` bounded without forcing a living brain topic to change its name |
 | upload rate | 600 version-creates per identity per hour | same family as existing signal rate limits. Raised from 30 by operator ruling of 2026-09-10, after 30 stopped a workspace migration; landed 2026-09-12. It is a FIXED clock-hour bucket, so it bounds create attempts per hour, not pace, and allows a double burst across an hour boundary; the byte and name caps above are what bound what can sit |
-| workspace upload ceiling | 2000 version-creates per workspace per hour | ceiling under docs/design/SWARM-CLOUD.md §2.8. 2000 is ~34× the busiest workspace-hour ever measured in production (58, the 2026-09-10 brain migration) and bounds the worst case (FREE_TIER_MEMBER_LIMIT 25 + FREE_TIER_PRINCIPAL_LIMIT 50 = 75 identities × 600 = 45,000) by 22×. The ceiling bounds a workspace's total per hour, which previously had no workspace-scoped ceiling, and it does NOT provide per-member fairness, which would need an owner-scoped bucket and is filed as its own item. It is a FIXED clock-hour bucket, bounding create attempts per hour, not pace |
+| workspace upload ceiling | 2000 version-creates per workspace per hour | ceiling under docs/design/SWARM-CLOUD.md §2.8. 2000 is ~34× the busiest workspace-hour ever measured in production (58, the 2026-09-10 brain migration) and bounds the worst case (FREE_TIER_MEMBER_LIMIT 25 + FREE_TIER_PRINCIPAL_LIMIT 50 = 75 identities × 600 = 45,000) by at least 22×. The ceiling bounds a workspace's total per hour, which previously had no workspace-scoped ceiling, and it does NOT provide per-member fairness, which would need an owner-scoped bucket and is filed as its own item. It is a FIXED clock-hour bucket, bounding create attempts per hour, not pace |
 
 Exceeding a cap is a refusal with the number in it ("this file is 31 MB; the per-file limit
 is 25 MB"), not a bare status.

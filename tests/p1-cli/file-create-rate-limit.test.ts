@@ -194,10 +194,25 @@ test("the edge enforcement lowercases UUIDs in rate bucket keys", () => {
 
 test("file-create rate-limit refusals return machine-readable scope field", () => {
   const index = read("supabase/functions/command/index.ts");
-  const idScope = /scope:\s*"identity"/.test(index);
-  const wsScope = /scope:\s*"workspace"/.test(index);
-  assert.ok(idScope, "identity file-create rate limit refusal is missing scope: 'identity'");
-  assert.ok(wsScope, "workspace file-create rate limit refusal is missing scope: 'workspace'");
+  /* Searching for both literals anywhere in the file leaves a SWAP green: the server would
+   * report "workspace" for an identity refusal and both strings would still be present. Bind
+   * each label to the limit constant its own refusal is raised against. */
+  const identityBlock = /FILE_CREATE_RATE_LIMIT_PER_HOUR[\s\S]{0,600}?scope:\s*"(\w+)"/.exec(index);
+  assert.ok(identityBlock, "no scope field follows the per-identity file-create limit");
+  assert.equal(
+    identityBlock![1],
+    "identity",
+    "the per-identity file-create refusal reports the wrong scope",
+  );
+
+  const workspaceBlock =
+    /FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR[\s\S]{0,600}?scope:\s*"(\w+)"/.exec(index);
+  assert.ok(workspaceBlock, "no scope field follows the per-workspace file-create ceiling");
+  assert.equal(
+    workspaceBlock![1],
+    "workspace",
+    "the per-workspace file-create refusal reports the wrong scope",
+  );
 });
 
 test("storage bucket migration fails loudly if not exactly one row updated", () => {
@@ -212,8 +227,44 @@ test("file create comments and design doc state correct free-tier aggregate arit
   const doc = read("docs/design/2026-08-18-FILE-ARTIFACTS.md");
   assert.ok(!edge.includes("30,000"), "file-artifacts.ts still contains stale 30,000 arithmetic");
   assert.ok(!doc.includes("30,000"), "FILE-ARTIFACTS.md still contains stale 30,000 arithmetic");
-  assert.ok(edge.includes("45,000"), "file-artifacts.ts does not state 45,000 aggregate");
-  assert.ok(doc.includes("45,000"), "FILE-ARTIFACTS.md does not state 45,000 aggregate");
+  /* `45,000` is arithmetic over three constants, so a literal search stays green after any of
+   * them moves and the documented worst case quietly becomes false. Recompute it. */
+  const index = read("supabase/functions/command/index.ts");
+  const constant = (source: string, name: string): number => {
+    const raw = new RegExp(`(?:export )?const ${name} = (\\d+)`).exec(source)?.[1];
+    assert.ok(raw, `${name} is no longer a numeric literal`);
+    return Number(raw);
+  };
+  const members = constant(index, "FREE_TIER_MEMBER_LIMIT");
+  const principals = constant(index, "FREE_TIER_PRINCIPAL_LIMIT");
+  const perIdentity = constant(edge, "FILE_CREATE_RATE_LIMIT_PER_HOUR");
+  const ceiling = constant(edge, "FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR");
+
+  const identities = members + principals;
+  const aggregate = identities * perIdentity;
+  const grouped = aggregate.toLocaleString("en-US");
+  for (const [label, text] of [["file-artifacts.ts", edge], ["FILE-ARTIFACTS.md", doc]] as const) {
+    assert.ok(
+      text.includes(grouped),
+      `${label} does not state the aggregate ${grouped} (${members} + ${principals} = ${identities} identities x ${perIdentity})`,
+    );
+    assert.ok(
+      text.includes(`${identities} identities`),
+      `${label} does not state ${identities} identities`,
+    );
+  }
+
+  /* The prose also claims the ceiling bounds that aggregate by a multiple. FLOOR, not round:
+   * 45,000 / 2,000 is 22.5, and "23x" would claim a tightness the ceiling does not deliver
+   * (2,000 x 23 = 46,000 > 45,000). The prose says "at least", which is the floor. */
+  const multiple = Math.floor(aggregate / ceiling);
+  for (const [label, text] of [["file-artifacts.ts", edge], ["FILE-ARTIFACTS.md", doc]] as const) {
+    assert.match(
+      text,
+      new RegExp(`by at least ${multiple}\\s*(?:x|×)`),
+      `${label} does not say the ceiling bounds the aggregate by at least ${multiple}x (${aggregate} / ${ceiling})`,
+    );
+  }
   assert.ok(!edge.includes("one member cannot exhaust the workspace"), "file-artifacts.ts still claims one member cannot exhaust the workspace");
   assert.ok(!doc.includes("one member cannot exhaust the workspace"), "FILE-ARTIFACTS.md still claims one member cannot exhaust the workspace");
   assert.ok(!doc.includes("600 version-creates per principal per hour"), "FILE-ARTIFACTS.md still states per principal");
@@ -776,10 +827,14 @@ test("the file-artifacts design doc enumerates the same extension allowlist", ()
  * control — a true sentence with nothing holding it is how this paragraph drifted before. */
 test("the refusal's framing claims hold against fileContentAllowed", async () => {
   const edgeModule = "../../supabase/functions/command/file-artifacts.ts";
-  const { FILE_TYPE_REFUSED_MESSAGE, fileContentAllowed } = (await import(edgeModule)) as {
-    FILE_TYPE_REFUSED_MESSAGE: string;
-    fileContentAllowed: (name: string, contentType: string) => boolean;
-  };
+  const { FILE_TYPE_REFUSED_MESSAGE, fileContentAllowed, validateFileCommand } =
+    (await import(edgeModule)) as {
+      FILE_TYPE_REFUSED_MESSAGE: string;
+      fileContentAllowed: (name: string, contentType: string) => boolean;
+      validateFileCommand: (
+        cmd: Record<string, unknown>,
+      ) => { ok: true; command: unknown } | { ok: false };
+    };
 
   assert.match(
     FILE_TYPE_REFUSED_MESSAGE,
@@ -802,22 +857,51 @@ test("the refusal's framing claims hold against fileContentAllowed", async () =>
   );
   assert.match(
     FILE_TYPE_REFUSED_MESSAGE,
-    /text\/\* means text\/ followed by lowercase letters, digits, dot, plus or hyphen/,
-    "the refusal no longer states the text/ subtype class",
+    /Case does not matter\. text\/\* means text\/ followed by letters, digits, dot, plus or hyphen/,
+    "the refusal no longer states the text/ subtype class, or has gone back to claiming case matters",
   );
-  assert.equal(fileContentAllowed("plan.md", "text/html"), true);
-  assert.equal(fileContentAllowed("plan.md", "text/vnd.curl"), true, "dots are in the subtype class");
-  assert.equal(fileContentAllowed("plan.md", "text/x-yaml"), true, "hyphens are in the subtype class");
-  assert.equal(fileContentAllowed("plan.md", "text/HTML"), false, "text/* is no longer lowercase-only");
-  assert.equal(fileContentAllowed("plan.md", "text/x_custom"), false, "underscores are no longer refused");
+  assert.ok(
+    !/lowercase/.test(FILE_TYPE_REFUSED_MESSAGE),
+    "the refusal claims lowercase again; validateFileCommand lowercases content_type for the caller",
+  );
+  /* These go through validateFileCommand FIRST. A control that calls fileContentAllowed on the
+   * raw string does not reach the path a user's request takes: the validator lowercases
+   * content_type, so the raw function refuses TEXT/PLAIN while the service accepts it —
+   * measured on production. Probe what the user actually hits. */
+  const accepts = (contentType: string): boolean => {
+    const validated = validateFileCommand({
+      kind: "file_version_create",
+      file_id: "3f1d4c6a-0000-4000-8000-000000000001",
+      version_id: "3f1d4c6a-0000-4000-8000-000000000002",
+      name: "plan.md",
+      declared_size_bytes: 16,
+      content_type: contentType,
+    });
+    if (!validated.ok) return false;
+    const command = validated.command as { name: string; content_type: string };
+    return fileContentAllowed(command.name, command.content_type);
+  };
+
+  assert.equal(accepts("text/html"), true);
+  assert.equal(accepts("text/vnd.curl"), true, "dots are in the subtype class");
+  assert.equal(accepts("text/x-yaml"), true, "hyphens are in the subtype class");
+  assert.equal(accepts("TEXT/PLAIN"), true, "the validator no longer lowercases content_type");
+  assert.equal(accepts("text/x_custom"), false, "underscores are no longer refused");
   assert.equal(
-    fileContentAllowed("plan.md", "text/plain; charset=utf-8"),
+    accepts("text/plain; charset=utf-8"),
     false,
     "a content-type parameter is no longer refused; the message still tells users to send it bare",
   );
   assert.equal(
-    fileContentAllowed("plan.md", "application/json; charset=utf-8"),
+    accepts("application/json; charset=utf-8"),
     false,
     "a parameter is refused on text/ but not on application/; the message speaks for both",
+  );
+  // The raw function is stricter than the path. Keeping this here so nobody re-derives the
+  // control from fileContentAllowed and re-learns it the hard way.
+  assert.equal(
+    fileContentAllowed("plan.md", "TEXT/PLAIN"),
+    false,
+    "fileContentAllowed now accepts uppercase; the validator's lowercasing is no longer what carries it",
   );
 });
