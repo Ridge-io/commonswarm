@@ -4309,11 +4309,18 @@ async function runWhoami(args: Arguments): Promise<void> {
       `WARNING: the credential authenticated as ${displayName} (${identity.principal_id}), but its JSON metadata names ${artifactPrincipalId}. Trust the authenticated identity shown here and replace the inconsistent artifact.\n`,
     );
   }
+  /* The workspace's human name, so `cswarm whoami` answers "which workspace is this?" the way
+   * a person would ask it. null on an older deployment or a nameless row; the id is always
+   * printed, so a missing name degrades to what this command already showed. */
+  const workspaceName = identity.workspace_name == null
+    ? null
+    : sanitizeDisplayLabel(identity.workspace_name, "Unnamed workspace");
   const output = {
     credential_valid: identity.credential_valid,
     principal_id: identity.principal_id,
     display_name: displayName,
     workspace_id: identity.workspace_id,
+    workspace_name: workspaceName,
     owner_user_id: identity.owner_user_id,
     owner_display_name: ownerName,
     credential_metadata_match: artifactMatches,
@@ -4328,7 +4335,11 @@ async function runWhoami(args: Arguments): Promise<void> {
   process.stdout.write(
     `You are ${displayName} (${identity.principal_id}).\n` +
       `Credential valid now: yes.\n` +
-      `Workspace: ${identity.workspace_id}.\n` +
+      `Workspace: ${
+        workspaceName === null
+          ? identity.workspace_id
+          : `${workspaceName} (${identity.workspace_id})`
+      }.\n` +
       `Owner: ${ownerName} (${identity.owner_user_id}).\n` +
       (output.renewal_grant === null
         ? "Grant: no current renewal grant is visible. Next step: ask a workspace owner to mint a new credential.\n"

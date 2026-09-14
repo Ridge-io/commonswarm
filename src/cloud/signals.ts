@@ -1270,6 +1270,12 @@ export interface SignalAgentIdentity {
   owner_user_id: string;
   principal_id: string;
   workspace_id: string;
+  /**
+   * The workspace's human display name, so an agent names a workspace the way a person does.
+   * Optional because an older deployment's read edge does not send it, and null when the row
+   * carries no name; callers must render the id alone rather than inventing one.
+   */
+  workspace_name?: string | null;
 }
 
 /** Live members and agents available as signal targets in one workspace. */
@@ -1323,11 +1329,19 @@ function parseAgentIdentity(value: unknown): SignalAgentIdentity {
   if (row.credential_valid !== true) {
     throw new Error("member read returned a malformed credential validity");
   }
+  /* Absent on an older deployment, null when the row carries no name. Neither is an error:
+   * the caller renders the id alone rather than inventing a name. A present value is bounded
+   * and sanitised at the point of display, like every other server-supplied label. */
+  const name = row.workspace_name;
+  if (name !== undefined && name !== null && typeof name !== "string") {
+    throw new Error("member read returned a malformed workspace name");
+  }
   return {
     credential_valid: true,
     owner_user_id: checkedUuid(row.owner_user_id, "identity owner_user_id"),
     principal_id: checkedUuid(row.principal_id, "identity principal_id"),
     workspace_id: checkedUuid(row.workspace_id, "identity workspace_id"),
+    workspace_name: typeof name === "string" ? name : null,
   };
 }
 

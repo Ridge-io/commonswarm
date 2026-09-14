@@ -650,6 +650,25 @@ async function handle(
           AND p.revoked_at IS NULL
         ORDER BY p.principal_id ASC
       `;
+      /* The workspace's HUMAN name, so an agent and a person call one workspace the same
+       * thing — read from swarm_read.workspaces, the SAME view the app's switcher reads.
+       *
+       * Not swarm.workspaces. This block installs the agent OWNER's claims above
+       * (`sub: agent.owner_user_id`) and then pins `search_path = swarm_read, auth,
+       * pg_catalog`, so the view's own `swarm.is_member(workspace_id, auth.uid())` gate
+       * resolves and admits exactly the workspaces that owner belongs to. Reaching past it to
+       * the base table leaves both the search path and the grants: measured 2026-09-14, that
+       * spelling answered HTTP 500 for every caller of this resource.
+       *
+       * The view also filters `archived_at IS NULL`, so an archived workspace yields no row
+       * and the name is null — the id still prints, which is the honest rendering for a
+       * workspace nobody can work in. */
+      const workspaceRows = await tx<{ name: string }[]>`
+        SELECT name
+        FROM swarm_read.workspaces
+        WHERE workspace_id = ${agent.principal_workspace_id}::uuid
+        LIMIT 1
+      `;
       return json(200, {
         members,
         agents,
@@ -662,6 +681,7 @@ async function handle(
           principal_id: agent.principal_id,
           owner_user_id: agent.owner_user_id,
           workspace_id: agent.principal_workspace_id,
+          workspace_name: workspaceRows[0]?.name ?? null,
           managed_at: agent.managed_at,
         },
       });
