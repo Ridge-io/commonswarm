@@ -5,6 +5,12 @@
  * the generated protocol bundle, and `tsconfig.json` covers only `src/`. This gate reads both
  * files instead and fails when the published number and the enforced constant disagree.
  *
+ * Compare-not-generate is the deliberate choice for the SITE, and only for the site: Astro
+ * builds in Node and the constants live in a Deno module that imports postgres, so a build-time
+ * import would drag the edge's dependency tree into the marketing site. Inside the edge, where
+ * there is no such boundary, a user-facing enumeration IS generated from the enforcement — see
+ * FILE_TYPE_REFUSED_MESSAGE in file-artifacts.ts and its gate at the end of this file.
+ *
  * Gate: `npm run test:p1-cli` (globs tests/p1-cli/**\/*.test.ts).
  */
 import assert from "node:assert/strict";
@@ -223,7 +229,14 @@ test("FileCommandRefused carries machine-readable scope, limit and resets_at", (
 });
 
 /* Item C structural citation gates: cross-file pointers must cite the symbol, and the cited
- * file:line must resolve to that symbol so an edit breaks the gate loudly instead of rotting. */
+ * file:line must resolve to that symbol so an edit breaks the gate loudly instead of rotting.
+ *
+ * SCOPE: these gates bind the pointers Item C wrote or touched — SWARM-CLOUD.md §2.8,
+ * src/cloud/files.ts, the acceptable-use comments, and the file-artifacts design doc. They do
+ * NOT bind every `file:line` in those documents. SWARM-CLOUD.md's board-v2 sections still cite
+ * `index.ts` / `src/index.ts` in the separate local `swarm` CLI, which is not in this
+ * repository and cannot be resolved from here. Do not read a green run as "every pointer in
+ * these files resolves". */
 
 test("SWARM-CLOUD.md §2.8 points at the active lines for fileContentAllowed and FILE_NAME_RE", () => {
   const doc = read("docs/design/SWARM-CLOUD.md");
@@ -367,5 +380,190 @@ test("the file-artifacts design doc cites objectSize symbol alone in file-artifa
   assert.ok(
     !/file-artifacts\.ts:\d+/.test(doc),
     "design doc contains line citation into file-artifacts.ts instead of symbol-only citation",
+  );
+});
+
+/* The refusal a user reads must name exactly what the check accepts. AGENTS.md: "An
+ * enumeration inside a message must be generated, not typed." This gate is deliberately NOT
+ * written against ALLOWED_EXTENSION_GROUPS — reading the same array the message is built from
+ * would be a circular control that passes whatever the array says. It parses the extensions
+ * OUT OF THE SHIPPED SENTENCE and runs each one through fileContentAllowed, the function the
+ * edge actually calls. Measured defect it exists to catch: the typed sentence it replaced
+ * omitted .html, .htm and .yml, all of which the check accepts. */
+test("every extension the refusal names is accepted, and named-absent ones are refused", async () => {
+  /* The specifier is a variable on purpose. tsconfig.tests.json has
+   * allowImportingTsExtensions off, so a literal ".ts" specifier is TS5097 at `check:tests`;
+   * the edge module has no .js build to point at, because tsc covers only src/. Keeping the
+   * real module under test matters more than a literal here: reading the file as text would
+   * make this a control over the source of the message rather than over the function the
+   * edge calls. */
+  const edgeModule = "../../supabase/functions/command/file-artifacts.ts";
+  const { ALLOWED_EXTENSION_RE, FILE_TYPE_REFUSED_MESSAGE, fileContentAllowed } =
+    (await import(edgeModule)) as {
+      ALLOWED_EXTENSION_RE: RegExp;
+      FILE_TYPE_REFUSED_MESSAGE: string;
+      fileContentAllowed: (name: string, contentType: string) => boolean;
+    };
+
+  const named = [...FILE_TYPE_REFUSED_MESSAGE.matchAll(/(?<![A-Za-z0-9])\.([A-Za-z0-9.]+)/g)]
+    .map((match) => match[1]!.toLowerCase());
+  assert.ok(named.length >= 20, `the refusal names only ${named.length} extensions: ${FILE_TYPE_REFUSED_MESSAGE}`);
+
+  // The historical defect was a message naming a SUBSET of what the check accepts: .html, .htm
+  // and .yml were accepted and unnamed, so the loop below — which only proves named ⊆ accepted —
+  // would have passed it. Compare the two SETS, using the regex's own source as the second,
+  // independently rendered view of the allowlist (escaped dots, `|` joined, anchored).
+  const accepted = ALLOWED_EXTENSION_RE.source
+    .replace(/^\\\.\(\?:/, "")
+    .replace(/\)\$$/, "")
+    .split("|")
+    .map((alternative) => alternative.replace(/\\\./g, ".").toLowerCase());
+  assert.ok(
+    accepted.length >= 20,
+    `could not parse the extension allowlist out of ALLOWED_EXTENSION_RE: ${ALLOWED_EXTENSION_RE.source}`,
+  );
+  assert.deepEqual(
+    [...new Set(named)].sort(),
+    [...new Set(accepted)].sort(),
+    "the extensions the refusal names and the extensions ALLOWED_EXTENSION_RE accepts are not the same set",
+  );
+
+  for (const extension of named) {
+    assert.equal(
+      fileContentAllowed(`plan.${extension}`, "text/plain"),
+      true,
+      `the refusal names .${extension} as allowed, but fileContentAllowed refuses plan.${extension}`,
+    );
+  }
+
+  // Negative control on the same invocation: an allowed content type with an extension the
+  // sentence does NOT name must still be refused, so the loop above cannot pass vacuously.
+  for (const extension of ["exe", "sh", "gz", "tar", "xml", "js", "mdx"]) {
+    assert.ok(
+      !named.includes(extension),
+      `this negative control is stale: the refusal now names .${extension}`,
+    );
+    assert.equal(
+      fileContentAllowed(`plan.${extension}`, "text/plain"),
+      false,
+      `.${extension} is not named in the refusal but fileContentAllowed accepts plan.${extension}`,
+    );
+  }
+});
+
+/* The refusal message must be built, not typed: a string literal at the refusal site is the
+ * defect this lane removed, and it would pass the behavioural gate above only by luck. */
+test("the file_type_refused site passes the generated constant, not a literal", () => {
+  const edge = read("supabase/functions/command/file-artifacts.ts");
+  assert.match(
+    edge,
+    /"file_type_refused",\s*\n\s*FILE_TYPE_REFUSED_MESSAGE,/,
+    "file_type_refused no longer passes FILE_TYPE_REFUSED_MESSAGE; a typed sentence has come back",
+  );
+  assert.ok(
+    /export const FILE_TYPE_REFUSED_MESSAGE =\s*\n?\s*`/.test(edge),
+    "FILE_TYPE_REFUSED_MESSAGE is no longer a template built from the allowlist groups",
+  );
+});
+
+/* ★R15 depends on a property of a PINNED dependency, so the claim is bound to the installed
+ * package rather than to a line number in it. The line citation this replaces (:345) was the
+ * method summary; the two-hour sentence sat two lines lower, and nothing failed. */
+test("the pinned storage-js still documents a two-hour signed upload URL", () => {
+  const doc = read("docs/design/2026-08-18-FILE-ARTIFACTS.md");
+  assert.match(
+    doc,
+    /signed upload URLs valid for TWO hours\s*\n?\s*\(`createSignedUploadUrl`/,
+    "the ★R15 sentence no longer cites createSignedUploadUrl by symbol",
+  );
+  assert.ok(
+    !/StorageFileApi\.ts:\d+\)/.test(doc),
+    "a bare StorageFileApi.ts line citation is back in the design doc",
+  );
+
+  const types = read("node_modules/@supabase/storage-js/dist/index.d.cts");
+  const start = types.indexOf("Creates a signed upload URL");
+  assert.ok(start >= 0, "storage-js no longer documents createSignedUploadUrl");
+  const block = types.slice(start, start + 400);
+  assert.match(
+    block,
+    /valid for 2 hours/,
+    "the pinned @supabase/storage-js no longer documents a two-hour signed upload URL; re-read ★R15 and the 3-hour pending sweep",
+  );
+});
+
+/* The acceptable-use page publishes four more numbers that were bound only by a line citation,
+ * so the pointer could stay correct while the number drifted. Bind the VALUES too. */
+test("acceptable-use publishes the enforced byte, name and version caps", () => {
+  const page = read("site/src/pages/acceptable-use.astro");
+  const edge = read("supabase/functions/command/file-artifacts.ts");
+  const protocolLimit = /export const BRAIN_LIVE_VERSION_LIMIT = (\d+)/.exec(
+    read("src/protocol/brain-version-window.ts"),
+  )?.[1];
+  assert.ok(protocolLimit, "BRAIN_LIVE_VERSION_LIMIT is no longer in src/protocol/brain-version-window.ts");
+
+  const constant = (name: string): number => {
+    const raw = new RegExp(`export const ${name} = ([^;]+);`).exec(edge)?.[1];
+    assert.ok(raw, `${name} is missing from file-artifacts.ts`);
+    const resolved = raw!.trim() === "BRAIN_LIVE_VERSION_LIMIT" ? protocolLimit! : raw!;
+    const value = Number(new Function(`return (${resolved});`)());
+    assert.ok(Number.isFinite(value), `${name} does not evaluate to a number: ${raw}`);
+    return value;
+  };
+
+  const perVersionMb = /(\d+) MB per version/.exec(page)?.[1];
+  assert.ok(perVersionMb, "acceptable-use no longer publishes the per-version cap");
+  assert.equal(
+    Number(perVersionMb) * 1024 * 1024,
+    constant("FILE_MAX_VERSION_BYTES"),
+    "acceptable-use publishes a per-version cap the edge does not enforce",
+  );
+
+  const workspaceGb = /(\d+) GB per workspace/.exec(page)?.[1];
+  assert.ok(workspaceGb, "acceptable-use no longer publishes the workspace byte cap");
+  assert.equal(
+    Number(workspaceGb) * 1024 * 1024 * 1024,
+    constant("FILE_WORKSPACE_MAX_BYTES"),
+    "acceptable-use publishes a workspace byte cap the edge does not enforce",
+  );
+
+  const names = /(\d+) unpurged names per workspace/.exec(page)?.[1];
+  assert.ok(names, "acceptable-use no longer publishes the workspace name cap");
+  assert.equal(
+    Number(names),
+    constant("FILE_WORKSPACE_MAX_NAMES"),
+    "acceptable-use publishes a name cap the edge does not enforce",
+  );
+
+  const versions = /(\d+) live or in-flight versions per file name/.exec(page)?.[1];
+  assert.ok(versions, "acceptable-use no longer publishes the per-name version cap");
+  assert.equal(
+    Number(versions),
+    constant("FILE_MAX_VERSIONS_PER_NAME"),
+    "acceptable-use publishes a per-name version cap the edge does not enforce",
+  );
+});
+
+/* The quota sentence describes WHICH rows the byte cap counts. It counted "unpurged versions",
+ * which is not what the SQL sums: a pending row older than the 3-hour window is still unpurged
+ * and is NOT counted. */
+test("acceptable-use describes the rows the byte quota actually sums", () => {
+  const page = read("site/src/pages/acceptable-use.astro");
+  const edge = read("supabase/functions/command/file-artifacts.ts");
+
+  const sql = /SELECT coalesce\(sum\(size_bytes\)[\s\S]*?`/.exec(edge)?.[0];
+  assert.ok(sql, "the workspace byte-quota query is no longer recognisable in file-artifacts.ts");
+  assert.match(sql!, /state IN \('live', 'retired'\)/, "the byte quota no longer sums live and retired rows");
+  assert.match(sql!, /state = 'pending'/, "the byte quota no longer includes in-flight rows");
+  assert.match(sql!, /interval '3 hours'/, "the in-flight window in the byte quota is no longer 3 hours");
+
+  assert.match(
+    page,
+    /1 GB per workspace counting live and retired versions plus uploads begun in the last 3 hours/,
+    "acceptable-use no longer describes which rows the byte quota sums",
+  );
+  assert.ok(
+    !/GB of unpurged versions/.test(page),
+    "the retired wording 'GB of unpurged versions' is back; a pending row past the window is unpurged and uncounted",
   );
 });

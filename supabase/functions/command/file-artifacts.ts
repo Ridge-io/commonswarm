@@ -85,10 +85,11 @@ export const FILE_CREATE_RATE_LIMIT_PER_HOUR = 600;
 // 2000 is ~34x the busiest workspace-hour ever measured in production (58, the 2026-09-10
 // brain migration).
 //
-// It bounds the previously had no workspace-scoped ceiling worst case (FREE_TIER_MEMBER_LIMIT 25 +
-// FREE_TIER_PRINCIPAL_LIMIT 50 = 75 identities x 600 = 45,000) by 22x.
+// It bounds the worst case that had no workspace-scoped ceiling before this constant existed
+// (FREE_TIER_MEMBER_LIMIT 25 + FREE_TIER_PRINCIPAL_LIMIT 50 = 75 identities x 600 = 45,000) by 22x.
 //
-// The ceiling bounds a workspace's total creates per hour, which was previously had no workspace-scoped ceiling.
+// The ceiling bounds a workspace's total creates per hour. Before it, only the per-identity cap
+// applied, so a workspace had no ceiling of its own.
 // It does NOT provide per-member fairness: a member can own several principals, so one member
 // can spend all 2,000. True per-member fairness would need an owner-scoped bucket and is filed
 // as its own item.
@@ -114,8 +115,44 @@ const FILE_NAME_RE = /^(?![.\s])[^/\\\u0000-\u001f]{1,255}$/;
 // §5 allowlist: declared content type AND filename extension check together.
 const ALLOWED_CONTENT_TYPE_RE =
   /^(text\/[a-z0-9.+-]+|application\/(pdf|json|x-yaml|yaml|zip|gzip|x-gzip|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation))|image\/(png|jpeg|gif|webp|svg\+xml))$/;
-const ALLOWED_EXTENSION_RE =
-  /\.(md|txt|csv|html?|json|yaml|yml|pdf|docx|xlsx|pptx|png|jpg|jpeg|gif|webp|svg|zip|tar\.gz)$/i;
+
+/**
+ * The extension allowlist, grouped, so the refusal a user reads is BUILT from the same
+ * source `fileContentAllowed` tests against. AGENTS.md: "An enumeration inside a message
+ * must be generated, not typed." Measured: the typed sentence this replaces omitted
+ * `.html`, `.htm` and `.yml`, which the check has always accepted, so three valid
+ * uploads were refused by a message that called them disallowed.
+ */
+const ALLOWED_EXTENSION_GROUPS = [
+  { label: "text", extensions: ["md", "txt", "csv", "html", "htm", "json", "yaml", "yml"] },
+  { label: "documents", extensions: ["pdf", "docx", "xlsx", "pptx"] },
+  { label: "images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] },
+  { label: "archives", extensions: ["zip", "tar.gz"] },
+] as const;
+
+export const ALLOWED_EXTENSION_RE = new RegExp(
+  `\\.(?:${
+    ALLOWED_EXTENSION_GROUPS.flatMap((group) => group.extensions)
+      .map((extension) => extension.replace(/\./g, "\\."))
+      .join("|")
+  })$`,
+  "i",
+);
+
+/**
+ * The refusal a user reads when the name or the declared type is off the allowlist.
+ * The extension half is generated from ALLOWED_EXTENSION_GROUPS above; the content-type
+ * half is described rather than enumerated, because ALLOWED_CONTENT_TYPE_RE accepts every
+ * `text/*` subtype and so has no finite list to print.
+ */
+export const FILE_TYPE_REFUSED_MESSAGE =
+  `this name or content type is not on the allowlist: the filename extension must be one of ${
+    ALLOWED_EXTENSION_GROUPS
+      .map((group) =>
+        `${group.label} (${group.extensions.map((extension) => `.${extension}`).join(" ")})`
+      )
+      .join(", ")
+  }, and the declared content type must be text/*, an application type for those documents and archives, or one of the image types above`;
 
 export interface FileVersionCreateCommand {
   kind: typeof FILE_VERSION_CREATE_KIND;
@@ -405,7 +442,7 @@ export async function fileVersionCreate(
     return refuse(
       415,
       "file_type_refused",
-      "this name or content type is not on the allowlist: text (.md .txt .csv .json .yaml), documents (.pdf .docx .xlsx .pptx), images (.png .jpg .jpeg .gif .webp .svg), archives (.zip .tar.gz)",
+      FILE_TYPE_REFUSED_MESSAGE,
       "content type or extension off allowlist",
     );
   }

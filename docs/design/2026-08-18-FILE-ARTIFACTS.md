@@ -197,12 +197,18 @@ command function (request size limits, memory, and double-handling):
    longer describes them.
    ★R15 — **the pending-row lifetime must exceed the upload URL lifetime.** The pinned
    @supabase/storage-js issues signed upload URLs valid for TWO hours
-   (StorageFileApi.ts:345), so a 1-hour pending GC would delete the row while the URL
+   (`createSignedUploadUrl`, bound to the installed package by a gate in
+   `tests/p1-cli/file-create-rate-limit.test.ts`), so a 1-hour pending GC would delete the row while the URL
    still works, leaving an orphan object with no durable record. And the row's clock
    starts BEFORE the URL is signed, so an exactly-2h sweep still races the signing delay:
    the URL lives 2 hours, and **the pending row is swept at 3 hours** — URL validity plus
    an hour of margin. The purge job also sweeps **orphan objects** — storage paths with
    no row, or whose row expired un-committed — on the same schedule.
+
+   *Retired pointer:* this paragraph cited `StorageFileApi.ts:345` until 2026-09-13. That line
+   is the method summary; the two-hour sentence sits two lines below it, and nothing failed when
+   they drifted apart. A line number into a pinned dependency is not a citation this repository
+   can keep true, so the claim is now bound to the package by a gate instead.
 
 Download mirrors it in one step: `file_download_url` (command) verifies membership and
 liveness, then returns a signed URL good for 5 minutes. Issuing a download URL is a command,
