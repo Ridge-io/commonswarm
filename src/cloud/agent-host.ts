@@ -17,7 +17,11 @@ async function parentProcess(pid: number): Promise<ParentProcess | null> {
   } catch { return null; }
 }
 
-/** Prefer the closest named host; consult Bot markers only after a passthrough walk. */
+function looksLikeGrokBotHost(env: NodeJS.ProcessEnv, exists: (path: string) => boolean): boolean {
+  return env.CURSOR_AGENT === "1" || Boolean(env.SAND_HOST_PORT || env.CURSOR_AGENT_SOCKET) || GROK_BOT_GATEWAY_PATHS.some(exists);
+}
+
+/** Prefer the closest named host; Bot env markers apply unless a foreign CLI host bounds the walk. */
 export async function detectAgentHost(read = parentProcess, start = process.ppid, env: NodeJS.ProcessEnv = process.env, exists: (path: string) => boolean = existsSync): Promise<DetectedAgentHost> {
   let pid = start;
   const seen = new Set<number>();
@@ -29,10 +33,13 @@ export async function detectAgentHost(read = parentProcess, start = process.ppid
     if (executable === "claude") return "claude";
     if (executable === "codex") return "codex";
     if (executable === "Codex" && row.executable.includes("/Codex.app/")) return "codex-desktop";
-    // A different host is a boundary: never label its child as a more distant host.
+    // A different agent CLI is a boundary: never label its child via Bot env markers.
     if (["grok", "opencode", "gemini"].includes(executable)) return "unknown";
-    if (!["node", "zsh", "bash", "sh", "env"].includes(executable)) return "unknown";
+    if (!["node", "zsh", "bash", "sh", "env"].includes(executable)) {
+      // Supervisor / host processes (e.g. sand-exit-watch) are not competing CLIs.
+      return looksLikeGrokBotHost(env, exists) ? "grok-bot" : "unknown";
+    }
     pid = row.parent;
   }
-  return env.CURSOR_AGENT === "1" || Boolean(env.SAND_HOST_PORT || env.CURSOR_AGENT_SOCKET) || GROK_BOT_GATEWAY_PATHS.some(exists) ? "grok-bot" : "unknown";
+  return looksLikeGrokBotHost(env, exists) ? "grok-bot" : "unknown";
 }
