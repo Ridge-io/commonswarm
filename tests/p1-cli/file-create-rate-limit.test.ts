@@ -647,8 +647,11 @@ test("every content type the refusal names is accepted, and the set matches the 
   };
   const edge = read("supabase/functions/command/file-artifacts.ts");
 
-  const named = [...FILE_TYPE_REFUSED_MESSAGE.matchAll(/content types: (.+)/g)]
-    .flatMap((match) => match[1]!.split(",").map((entry) => entry.trim()));
+  /* Each group renders as `label: .ext .ext / type, type`. Anchor on that shape rather than
+   * splitting the whole message on "; " — the header sentence contains "; charset=utf-8". */
+  const named = [...FILE_TYPE_REFUSED_MESSAGE.matchAll(/[a-z]+: (?:\.[a-z0-9.]+ ?)+\/ ([^;]+)/g)]
+    .flatMap((match) => match[1]!.split(",").map((entry) => entry.trim()))
+    .filter((entry) => entry.length > 0);
   assert.ok(named.length >= 15, `the refusal names only ${named.length} content types`);
 
   // Behavioural half: a named type on an allowed extension must be accepted. `.md` is in the
@@ -838,7 +841,7 @@ test("the refusal's framing claims hold against fileContentAllowed", async () =>
 
   assert.match(
     FILE_TYPE_REFUSED_MESSAGE,
-    /any listed extension may carry any listed content type/,
+    /they need not come from the same group/,
     "the refusal no longer says the groups need not match",
   );
   // An image extension with a text-group content type: accepted, because the two halves are
@@ -852,13 +855,13 @@ test("the refusal's framing claims hold against fileContentAllowed", async () =>
    * wording ("any lowercase text subtype") claiming the parameter case. */
   assert.match(
     FILE_TYPE_REFUSED_MESSAGE,
-    /Send the content type bare, with no parameters: text\/plain is accepted, text\/plain; charset=utf-8 is not/,
+    /Send the content type bare: a parameter such as "; charset=utf-8" is refused/,
     "the refusal no longer warns that a content-type parameter is refused",
   );
   assert.match(
     FILE_TYPE_REFUSED_MESSAGE,
-    /Case does not matter\. text\/\* means text\/ followed by letters, digits, dot, plus or hyphen/,
-    "the refusal no longer states the text/ subtype class, or has gone back to claiming case matters",
+    /Case does not matter\./,
+    "the refusal no longer says case is normalised for the caller",
   );
   assert.ok(
     !/lowercase/.test(FILE_TYPE_REFUSED_MESSAGE),
@@ -904,4 +907,52 @@ test("the refusal's framing claims hold against fileContentAllowed", async () =>
     false,
     "fileContentAllowed now accepts uppercase; the validator's lowercasing is no longer what carries it",
   );
+});
+
+/* The CLI is the last mile, and it TRUNCATES. `safeError` in src/cli.ts strips ANSI, maps the
+ * C0 range (newlines included) to spaces, and slices to 1000 characters. A Grok arm measured the
+ * multi-line version of this refusal at 1,148 characters: the user lost the tail of the images
+ * group and the whole archives group, so the message that exists to name the allowlist did not
+ * name all of it. Gate the STRING THE USER SEES, not the constant. */
+test("the refusal survives the CLI's own truncation with every group intact", async () => {
+  const edgeModule = "../../supabase/functions/command/file-artifacts.ts";
+  const { FILE_TYPE_REFUSED_MESSAGE } = (await import(edgeModule)) as {
+    FILE_TYPE_REFUSED_MESSAGE: string;
+  };
+  const cli = read("src/cli.ts");
+
+  /* Read the limit and the transformation out of safeError rather than repeating them: if the
+   * CLI's cap moves, this gate moves with it instead of defending a number nobody kept. */
+  const body = /function safeError\(error: unknown\): string \{([\s\S]*?)\n\}/.exec(cli)?.[1];
+  assert.ok(body, "safeError is no longer recognisable in src/cli.ts");
+  const cap = Number(/\.slice\(0,\s*(\d+)\)/.exec(body!)?.[1]);
+  assert.ok(Number.isFinite(cap) && cap > 0, `safeError no longer slices to a fixed length: ${body}`);
+  assert.match(body!, /u0000-\\u001f/, "safeError no longer maps the C0 range, so newlines may now survive");
+
+  const rendered = FILE_TYPE_REFUSED_MESSAGE
+    .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, " ")
+    .slice(0, cap);
+
+  assert.ok(
+    rendered.length < cap,
+    `the refusal renders to ${rendered.length} characters and safeError cuts at ${cap}; the tail of the allowlist never reaches the user`,
+  );
+
+  /* Every group label and every leaf must still be present AFTER the cut. */
+  const groups = /const ALLOWED_TYPE_GROUPS = \[([\s\S]*?)\n\] as const;/.exec(
+    read("supabase/functions/command/file-artifacts.ts"),
+  )?.[1];
+  assert.ok(groups, "ALLOWED_TYPE_GROUPS is no longer a literal array");
+  for (const label of [...groups!.matchAll(/label: "([a-z]+)"/g)].map((match) => match[1]!)) {
+    assert.ok(rendered.includes(`${label}:`), `the group "${label}" is cut off before the user sees it`);
+  }
+  for (const extension of [...groups!.matchAll(/extensions: \[([^\]]*)\]/g)]
+    .flatMap((match) => [...match[1]!.matchAll(/"([a-z0-9.]+)"/g)].map((entry) => entry[1]!))) {
+    assert.ok(rendered.includes(`.${extension}`), `.${extension} is cut off before the user sees it`);
+  }
+  for (const contentType of [...groups!.matchAll(/contentTypes: \[([^\]]*)\]/g)]
+    .flatMap((match) => [...match[1]!.matchAll(/"([^"]+)"/g)].map((entry) => entry[1]!))
+    .filter((entry) => entry !== "TEXT_SUBTYPE_WILDCARD")) {
+    assert.ok(rendered.includes(contentType), `${contentType} is cut off before the user sees it`);
+  }
 });

@@ -192,14 +192,14 @@ export const ALLOWED_EXTENSION_RE = new RegExp(
  * it is filed as its own item rather than done here.
  */
 export const FILE_TYPE_REFUSED_MESSAGE =
-  `this name or content type is not on the allowlist. The filename extension and the declared content type are checked separately, so each must be on the list below and the groups do not have to match: any listed extension may carry any listed content type. Send the content type bare, with no parameters: text/plain is accepted, text/plain; charset=utf-8 is not. Case does not matter. text/* means text/ followed by letters, digits, dot, plus or hyphen.\n${
+  `this name or content type is not on the allowlist. Extension and content type are checked separately, so each must be on this list and they need not come from the same group. Send the content type bare: a parameter such as "; charset=utf-8" is refused. Case does not matter. ${
     ALLOWED_TYPE_GROUPS
       .map((group) =>
-        `  ${group.label}\n    extensions: ${
+        `${group.label}: ${
           group.extensions.map((extension) => `.${extension}`).join(" ")
-        }\n    content types: ${group.contentTypes.join(", ")}`
+        } / ${group.contentTypes.join(", ")}`
       )
-      .join("\n")
+      .join("; ")
   }`;
 
 export interface FileVersionCreateCommand {

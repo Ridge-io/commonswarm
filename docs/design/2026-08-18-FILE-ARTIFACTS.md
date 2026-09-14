@@ -125,10 +125,18 @@ pending row back, not a second one.
 Allowlist. The declared content type and the filename extension are checked INDEPENDENTLY and
 both must pass, so the groups below are for reading: any listed extension may carry any listed
 content type.
-text (`text/*`, `.md`, `.txt`, `.csv`, `.html`, `.htm`, `.json`, `.yaml`, `.yml`), documents
+text (`text/<subtype>` where the subtype matches `[a-z0-9.+-]+`, plus `application/json`,
+`application/yaml` and `application/x-yaml`; extensions `.md`, `.txt`, `.csv`, `.html`, `.htm`,
+`.json`, `.yaml`, `.yml`), documents
 (`.pdf`, `.docx`, `.xlsx`, `.pptx`), images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`),
 archives (`.zip`, `.tar.gz`). Everything else — executables, scripts, dylibs, unknown binaries — is
 refused with the list.
+
+The type is matched whole and anchored, so a media-type PARAMETER is refused: `text/plain` passes
+and `text/plain; charset=utf-8` does not, on every type and not only text. `validateFileCommand`
+lowercases the declaration first, so case is normalised for the caller and `TEXT/PLAIN` is
+accepted. Both measured on production 2026-09-13; see the brain topic
+`content-type-parameters-are-refused` for why the parameter case is filed rather than fixed here.
 
 Two supporting rules:
 
