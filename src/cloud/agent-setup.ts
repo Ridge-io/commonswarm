@@ -10,7 +10,7 @@ import {
   type AgentProfile,
 } from "./agent-profile.js";
 import { assertProfileIdentity, withAgentDeadline } from "./agent-check.js";
-import { AGENT_CONNECTION_VERSION, RECEIVE_CHOICE, RECEIVE_PROVIDERS, RECEIVE_WAKE_PROVIDER } from "./agent-onboarding-contract.js";
+import { AGENT_CONNECTION_VERSION, RECEIVE_CHOICE, RECEIVE_PROVIDERS, RECEIVE_WAKE_PROVIDER, RECEIVE_WAKE_PROVIDERS } from "./agent-onboarding-contract.js";
 import { readReceiveBinding, receiveStatus } from "./agent-receive.js";
 import { detectAgentHost } from "./agent-host.js";
 
@@ -60,7 +60,7 @@ export async function setupAgent(options: {
     profile: profilePath, principal_id: connection.principal_id, workspace_id: connection.workspace_id,
     ...identity,
     host: await hostPromise,
-    receive_capabilities: { turn: RECEIVE_PROVIDERS, wake: { provider: RECEIVE_WAKE_PROVIDER, preview: true, requires_idle_test: true } },
+    receive_capabilities: { turn: RECEIVE_PROVIDERS, wake: RECEIVE_WAKE_PROVIDERS.map(provider => ({ provider, preview: provider === RECEIVE_WAKE_PROVIDER, requires_idle_test: true })) },
     receive: receiveStatus(receive),
     ...(receive === null ? { receive_choice: RECEIVE_CHOICE } : {}),
     next_action: receive === null

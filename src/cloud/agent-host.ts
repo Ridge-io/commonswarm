@@ -1,9 +1,11 @@
+import { existsSync } from "node:fs";
+import { GROK_BOT_GATEWAY_PATHS } from "./agent-grok-bot-gateway.js";
 import { execFile } from "node:child_process";
 import { basename } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
-export type DetectedAgentHost = "claude" | "codex" | "codex-desktop" | "unknown";
+export type DetectedAgentHost = "claude" | "codex" | "codex-desktop" | "grok-bot" | "unknown";
 interface ParentProcess { parent: number; executable: string }
 
 async function parentProcess(pid: number): Promise<ParentProcess | null> {
@@ -15,8 +17,8 @@ async function parentProcess(pid: number): Promise<ParentProcess | null> {
   } catch { return null; }
 }
 
-/** Detect the closest host process. Installed programs and inherited env are not host identity. */
-export async function detectAgentHost(read = parentProcess, start = process.ppid): Promise<DetectedAgentHost> {
+/** Prefer the closest named host; consult Bot markers only after a passthrough walk. */
+export async function detectAgentHost(read = parentProcess, start = process.ppid, env: NodeJS.ProcessEnv = process.env, exists: (path: string) => boolean = existsSync): Promise<DetectedAgentHost> {
   let pid = start;
   const seen = new Set<number>();
   for (let hop = 0; hop < 6 && pid > 1 && !seen.has(pid); hop++) {
@@ -32,5 +34,5 @@ export async function detectAgentHost(read = parentProcess, start = process.ppid
     if (!["node", "zsh", "bash", "sh", "env"].includes(executable)) return "unknown";
     pid = row.parent;
   }
-  return "unknown";
+  return env.CURSOR_AGENT === "1" || Boolean(env.SAND_HOST_PORT || env.CURSOR_AGENT_SOCKET) || GROK_BOT_GATEWAY_PATHS.some(exists) ? "grok-bot" : "unknown";
 }

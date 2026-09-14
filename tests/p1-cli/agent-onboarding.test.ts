@@ -372,3 +372,19 @@ test("damaged handoffs fail before authentication and keep CLI errors secret-fre
   assert.equal(version.code, 0);
   assert.deepEqual(JSON.parse(version.stdout), { setup_version: 1 });
 });
+
+test("Grok Bot env detection only follows a completed passthrough walk", async () => {
+  const { detectAgentHost } = await import("../../src/cloud/agent-host.js");
+  const pass = async () => ({ parent: 1, executable: "bash" });
+  for (const env of [{ CURSOR_AGENT: "1" }, { SAND_HOST_PORT: "1340" }, { CURSOR_AGENT_SOCKET: "/tmp/fixture.sock" }]) {
+    assert.equal(await detectAgentHost(pass, 10, env, () => false), "grok-bot");
+    for (const executable of ["grok", "opencode", "gemini"]) {
+      assert.equal(await detectAgentHost(async () => ({ parent: 1, executable }), 10, env, () => true), "unknown");
+    }
+    assert.equal(await detectAgentHost(async () => null, 10, env, () => true), "unknown");
+    assert.equal(await detectAgentHost(async () => ({ parent: 1, executable: "codex" }), 10, env, () => true), "codex");
+  }
+  assert.equal(await detectAgentHost(pass, 10, {}, () => false), "unknown");
+  assert.equal(await detectAgentHost(pass, 10, {}, p => p === "/home/box/sand-data/gateway.json"), "grok-bot");
+  assert.equal(await detectAgentHost(async pid => ({ parent: pid + 1, executable: "node" }), 10, { CURSOR_AGENT: "1" }, () => false), "grok-bot");
+});
