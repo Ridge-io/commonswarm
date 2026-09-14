@@ -944,7 +944,12 @@ test("the refusal survives the CLI's own truncation with every group intact", as
   assert.ok(body, "safeError is no longer recognisable in src/cli.ts");
   const cap = Number(/\.slice\(0,\s*(\d+)\)/.exec(body!)?.[1]);
   assert.ok(Number.isFinite(cap) && cap > 0, `safeError no longer slices to a fixed length: ${body}`);
-  assert.match(body!, /u0000-\\u001f/, "safeError no longer maps the C0 range, so newlines may now survive");
+  /* The C0 mapping lives in sanitizeForTerminal, which safeError composes; read it there rather
+   * than requiring it inline, so moving the transformation does not fake a pass. */
+  assert.match(body!, /sanitizeForTerminal\(message\)/, "safeError no longer routes through the terminal sanitiser");
+  const sanitizer = /function sanitizeForTerminal\(value: string\): string \{([\s\S]*?)\n\}/.exec(cli)?.[1];
+  assert.ok(sanitizer, "sanitizeForTerminal is no longer recognisable in src/cli.ts");
+  assert.match(sanitizer!, /u0000-\\u001f/, "the terminal sanitiser no longer maps the C0 range, so newlines may now survive");
 
   const rendered = FILE_TYPE_REFUSED_MESSAGE
     .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, " ")
@@ -1029,4 +1034,43 @@ test("the generated content-type regex accepts and refuses exactly what the lite
   assert.equal(CONTENT_TYPE_RE_BEFORE_GENERATION.test("text/plain"), true);
   assert.equal(CONTENT_TYPE_RE_BEFORE_GENERATION.test("application/octet-stream"), false);
   assert.ok(cases.length >= 40, `the differential shrank to ${cases.length} cases`);
+});
+
+/* The refusal's machine-readable fields reach the terminal too. D-053 keeps us off
+ * `error.message` for CLASSIFICATION; it does not make the other wire fields safe to PRINT.
+ * `scope` and `resets_at` are strings the SERVER chooses, and this lane added a branch that
+ * wrote them raw beside a sanitised message — the one unsanitised path in the pair. A Codex arm
+ * caught it. Assert the CLI routes them through the same terminal sanitiser. */
+test("the CLI sanitises the refusal's wire fields before they reach the terminal", () => {
+  const cli = read("src/cli.ts");
+
+  assert.match(
+    cli,
+    /function sanitizeForTerminal\(value: string\): string \{[\s\S]*?u001b[\s\S]*?u0000-\\u001f/,
+    "sanitizeForTerminal no longer strips ANSI escapes and the C0 range",
+  );
+  assert.match(
+    cli,
+    /const message = error instanceof Error \? error\.message : "unknown error";\s*\n\s*return sanitizeForTerminal\(message\)/,
+    "safeError no longer routes through sanitizeForTerminal",
+  );
+  assert.match(
+    cli,
+    /const extra = parts\.length > 0\s*\n?\s*\? ` \[\$\{sanitizeForTerminal\(parts\.join\(", "\)\)\.slice\(0, \d+\)\}\]`/,
+    "the scope/limit/resets_at line no longer sanitises the values it prints",
+  );
+
+  /* The behaviour the assertions above stand for, exercised directly: a hostile scope value
+   * must lose its escape sequence and its control characters. */
+  const sanitize = (value: string): string =>
+    value
+      .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+      .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, " ");
+  const hostile = "identity\u001b[2J\u001b[1;1Hcswarm: everything is fine\u0007";
+  const cleaned = sanitize(hostile);
+  assert.ok(!cleaned.includes("\u001b"), "the sanitiser left an escape character in place");
+  assert.ok(!/[\u0000-\u001f]/.test(cleaned), "the sanitiser left a C0 control character in place");
+  assert.ok(cleaned.startsWith("identity"), `the sanitiser mangled the legitimate prefix: ${JSON.stringify(cleaned)}`);
+  // Positive control on the same invocation: an ordinary value passes through untouched.
+  assert.equal(sanitize("workspace"), "workspace");
 });

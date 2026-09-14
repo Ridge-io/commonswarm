@@ -13,19 +13,25 @@ const dist = path.join(siteRoot, "dist");
  * red the moment the site was rebuilt for release. Refuse to report on output older than the
  * pages it claims to describe: a loud "rebuild first" beats a silent false green. */
 const assertDistIsCurrent = () => {
-  const pagesDir = path.join(siteRoot, "src", "pages");
   const builtAt = Math.min(
     ...["index.html", path.join("start", "index.html"), path.join("acceptable-use", "index.html")]
       .map((relative) => fs.statSync(path.join(dist, relative)).mtimeMs),
   );
-  const sources = fs
-    .readdirSync(pagesDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".astro"))
-    .map((entry) => path.join(pagesDir, entry.name));
+  /* A page's text can come from a layout or a component it imports, so scanning only
+   * src/pages leaves the same stale-output hole one directory over. Walk the whole source
+   * tree instead; a review arm caught the narrower version. */
+  const walk = (dir) =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return walk(full);
+      return /\.(astro|ts|mjs|js|md)$/.test(entry.name) ? [full] : [];
+    });
+  const sources = walk(path.join(siteRoot, "src"))
+    .filter((file) => !/\.(observer|test)\.(mjs|ts)$/.test(file));
   const stale = sources.filter((file) => fs.statSync(file).mtimeMs > builtAt);
   if (stale.length > 0) {
     throw new Error(
-      `site/dist is older than ${stale.length} page source(s) — ${stale
+      `site/dist is older than ${stale.length} source file(s) — ${stale
         .map((file) => path.basename(file))
         .join(", ")}. This observer reads built output, so it would report on the previous ` +
         "build. Run: cd site && rm -rf dist && npm run build",

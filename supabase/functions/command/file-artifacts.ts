@@ -123,11 +123,13 @@ const FILE_NAME_RE = /^(?![.\s])[^/\\\u0000-\u001f]{1,255}$/;
  * "an application type for those documents and archives", which is false — `application/json`
  * and the two YAML types are accepted and are neither.
  *
- * `contentTypes` describes ALLOWED_CONTENT_TYPE_RE; it does not build it. The regex below
- * stays the single enforcement, so no widening can slip in through a message. The two are
- * held together by gates in tests/p1-cli/file-create-rate-limit.test.ts, which parse the
- * regex's own source and probe fileContentAllowed with every named type and with near
- * misses.
+ * `contentTypes` COMPILES ALLOWED_CONTENT_TYPE_RE below, so there is one source and the message
+ * cannot name a set the check does not enforce. (This comment said the opposite while the regex
+ * was hand-written beside it; a review arm caught the contradiction.) Generating a security
+ * control means proving it did not move: a differential in
+ * tests/p1-cli/file-create-rate-limit.test.ts pins the compiled regex against the exact literal
+ * it replaced, over every accepted type and a set of near misses chosen to catch an unescaped
+ * metacharacter.
  */
 /* Printed verbatim in the refusal AND compiled into ALLOWED_CONTENT_TYPE_RE, so the message
  * cannot name a class the check does not enforce. Written as the character class rather than
