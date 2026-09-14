@@ -223,6 +223,32 @@ test("browser attachment preflight mirrors the eight-file and 25 MB limits", () 
     /25 MB/,
   );
   assert.throws(() => prepareBrowserAttachments([file("run.exe", 1)]), /file type/);
+
+  /* The paste path names an extension for an unnamed clipboard image. It used to map only
+   * png/jpeg/gif/webp and fall through to ".image", so a pasted SVG became
+   * pasted-image-1.image and was refused although .svg IS on the workspace allowlist — a
+   * fourth copy of the image half. A Grok arm then pointed out the fix itself had no control:
+   * deleting the line left this suite green. Bind every image type the paste map claims to
+   * handle to an extension the browser preflight accepts. */
+  const pasteMap = between(
+    dashboard,
+    'const pastedImages =',
+    'stageComposerFiles(pastedImages)',
+  );
+  const mapped = [...pasteMap.matchAll(/"(image\/[a-z0-9.+-]+)":\s*"([a-z0-9]+)"/g)]
+    .map(([, contentType, extension]) => [contentType!, extension!] as const);
+  assert.ok(mapped.length >= 5, `the paste map names only ${mapped.length} image types`);
+  assert.ok(
+    mapped.some(([contentType]) => contentType === "image/svg+xml"),
+    "the paste map no longer names image/svg+xml, so a pasted SVG falls back to .image and is refused",
+  );
+  for (const [contentType, extension] of mapped) {
+    assert.equal(
+      prepareBrowserAttachments([file(`pasted-image-1.${extension}`, 100)], 0)[0]?.contentType,
+      contentType,
+      `the paste map turns ${contentType} into .${extension}, but the browser preflight does not map that extension back to it`,
+    );
+  }
   const upload = between(
     client,
     "export async function uploadBrowserAttachment",

@@ -84,7 +84,7 @@ const CITATIONS: Citation[] = [
   {
     citedBy: "site/src/lib/agent-connect.ts (mintedHorizon)",
     file: "supabase/functions/command/index.ts",
-    lines: [9137, 9141],
+    lines: [9161, 9165],
     contains: "horizon_expires_at: prepared.command.renewal_horizon_ms === null",
   },
   {

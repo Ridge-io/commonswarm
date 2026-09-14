@@ -8346,6 +8346,30 @@ async function handleTransaction(
       if (preDispatch !== null) {
         return { status: 200, body: preDispatch.stored };
       }
+      /* The pre-charge recheck above settles the SEQUENTIAL replay: a command id that already
+       * has a stored response never reaches the meter. It does not settle the CONCURRENT one.
+       * Two in-flight requests sharing a new command id both see null there, both charge, and
+       * at the cap boundary one is told "Upload refused" while its twin is succeeding — a false
+       * sentence about the caller's own request, and it burns a slot for a duplicate.
+       *
+       * Re-read the ledger before refusing. If the twin has settled by then, replay its answer
+       * instead of lying. This is a NARROWING, not a cure: under READ COMMITTED a twin that has
+       * not yet committed is still invisible, so two genuinely simultaneous requests can still
+       * split 200/429. The cure is to charge the meter after the post-lock recheck inside the
+       * handler, which reorders a locking path and belongs in its own lane — filed, not done
+       * here. The identity bucket below has carried this shape since the 600/hour cap shipped;
+       * the guard is applied to both. */
+      const refusalOrReplay = async (
+        refusal: { status: number; body: Record<string, unknown> },
+      ): Promise<{ status: number; body: Record<string, unknown> }> => {
+        const settled = await ledgerRecheck();
+        if (settled?.hit === "conflict") {
+          return { status: 409, body: { error: "command_id_conflict" } };
+        }
+        if (settled !== null) return { status: 200, body: settled.stored };
+        return refusal;
+      };
+
       // §4 rate limit, charged only for the verb that consumes quota (★R9.6) —
       // and only AFTER the pre-charge recheck above, so replaying a settled
       // command id never burns budget or returns 429 (round-3 finding).
@@ -8377,7 +8401,7 @@ async function handleTransaction(
             detail,
             hash,
           });
-          return {
+          return await refusalOrReplay({
             status: 429,
             body: {
               error: "rate_limited",
@@ -8386,7 +8410,7 @@ async function handleTransaction(
               resets_at: bucket.resetsAt,
               scope: "identity",
             },
-          };
+          });
         }
         const wsBucket = await incrementRateBucket(
           tx,
@@ -8406,7 +8430,7 @@ async function handleTransaction(
             detail,
             hash,
           });
-          return {
+          return await refusalOrReplay({
             status: 429,
             body: {
               error: "rate_limited",
@@ -8415,7 +8439,7 @@ async function handleTransaction(
               resets_at: wsBucket.resetsAt,
               scope: "workspace",
             },
-          };
+          });
         }
       }
       const storage = fileStorage();

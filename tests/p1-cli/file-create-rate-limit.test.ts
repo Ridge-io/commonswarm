@@ -1336,3 +1336,56 @@ test("the acceptable-use page's updated date is not older than this lane's chang
     `acceptable-use says it was updated ${updated}, but the caps it publishes were rewritten on 13 September 2026`,
   );
 });
+
+/* A 429 is a sentence about the caller's own request, and at the cap boundary two in-flight
+ * requests sharing one command id could split 200/429 — the loser told "Upload refused" while
+ * its twin succeeded. The pre-charge recheck settles the SEQUENTIAL replay only. A Codex arm
+ * found the concurrent case. Both refusals now re-read the ledger first and replay a settled
+ * twin instead of lying. */
+test("a rate-limit refusal re-reads the ledger before it tells the caller no", () => {
+  const index = read("supabase/functions/command/index.ts");
+
+  assert.match(
+    index,
+    /const refusalOrReplay = async \([\s\S]*?const settled = await ledgerRecheck\(\);/,
+    "refusalOrReplay no longer re-reads the ledger before refusing",
+  );
+  assert.match(
+    index,
+    /if \(settled !== null\) return \{ status: 200, body: settled\.stored \};/,
+    "refusalOrReplay no longer replays a settled twin's stored response",
+  );
+  assert.match(
+    index,
+    /if \(settled\?\.hit === "conflict"\)/,
+    "refusalOrReplay no longer separates a conflicting command id from a replay",
+  );
+
+  /* BOTH buckets must go through it — the identity bucket carried this shape before the
+   * workspace ceiling existed, so fixing only the new one would leave the older half lying. */
+  /* Anchor on the CALL, not on the closing punctuation: `return ({ ... });` also ends with
+   * `});`, so a version of this assertion that matched only the tail passed the very mutation
+   * it existed to catch. Measured — the mutation landed and the test stayed green. */
+  const goesThroughGuard = (limitConstant: string, scope: string): boolean =>
+    new RegExp(
+      `return await refusalOrReplay\\(\\{[\\s\\S]{0,400}?limit: ${limitConstant},[\\s\\S]{0,200}?scope: "${scope}",`,
+    ).test(index);
+
+  assert.ok(
+    goesThroughGuard("FILE_CREATE_RATE_LIMIT_PER_HOUR", "identity"),
+    "the per-identity 429 no longer goes through refusalOrReplay",
+  );
+  assert.ok(
+    goesThroughGuard("FILE_CREATE_RATE_LIMIT_PER_WORKSPACE_PER_HOUR", "workspace"),
+    "the per-workspace 429 no longer goes through refusalOrReplay",
+  );
+
+  /* The comment must keep saying this is a narrowing, not a cure: under READ COMMITTED a twin
+   * that has not committed is invisible, so simultaneous requests can still split. A future
+   * reader who believes it is a cure will not do the reorder that is filed. */
+  assert.match(
+    index,
+    /NARROWING, not a cure/,
+    "the code no longer records that the concurrent split is only narrowed, not removed",
+  );
+});
