@@ -1149,6 +1149,89 @@ test("the server, the CLI and the web app publish the same extension allowlist",
   );
 });
 
+/* The gate above binds the extension KEYS and stops there. The maps are key→MIME, and the value
+ * is what the client SENDS: a wrong value means `cswarm file put icon.svg` passes the local
+ * check and is then refused by the server, while the local message still names `.svg`. A Grok
+ * arm caught the half-bound gate — the same shape as the two it caught in the rounds before, in
+ * my own new control. Bind the values to the enforcement that has to accept them. */
+test("every content type the clients send is one the server accepts", async () => {
+  const edgeModule = "../../supabase/functions/command/file-artifacts.ts";
+  const { fileContentAllowed } = (await import(edgeModule)) as {
+    fileContentAllowed: (name: string, contentType: string) => boolean;
+  };
+
+  const pairsFrom = (source: string, pattern: RegExp): Array<[string, string]> => {
+    const block = pattern.exec(source)?.[1];
+    assert.ok(block, `could not find the allowlist block with ${pattern}`);
+    return [...block!.matchAll(/\["(\.[a-z0-9.]+)",\s*"([^"]+)"\]/g)]
+      .map((match) => [match[1]!, match[2]!] as [string, string]);
+  };
+
+  const cliPairs = pairsFrom(
+    read("src/cloud/files.ts"),
+    /const CONTENT_TYPES: ReadonlyMap<string, string> = new Map\(\[([\s\S]*?)\n\]\);/,
+  );
+  const browserPairs = pairsFrom(
+    read("site/src/lib/commonswarm.ts"),
+    /BROWSER_ATTACHMENT_CONTENT_TYPES: ReadonlyArray<readonly \[string, string\]> = \[([\s\S]*?)\n\];/,
+  );
+  assert.ok(cliPairs.length >= 10 && browserPairs.length >= 10, "parsed too few client pairs");
+
+  for (const [label, pairs] of [["CLI", cliPairs], ["web app", browserPairs]] as const) {
+    for (const [extension, contentType] of pairs) {
+      assert.equal(
+        fileContentAllowed(`plan${extension}`, contentType),
+        true,
+        `the ${label} sends ${contentType} for ${extension}, and the server refuses that pair — the local check would pass and the upload would then fail`,
+      );
+    }
+  }
+});
+
+/* The printer, not the data. `allowedExtensionList()` is what a CLI user actually reads when a
+ * name is refused locally, and nothing called it: replacing it with a shorter typed string left
+ * the suite green while the first sentence a user sees was wrong. */
+test("the CLI's printed allowlist names every extension it accepts", async () => {
+  const clientModule = "../../src/cloud/files.ts";
+  const { allowedExtensionList, contentTypeForName } = (await import(clientModule)) as {
+    allowedExtensionList: () => string;
+    contentTypeForName: (name: string) => string | null;
+  };
+
+  const printed = allowedExtensionList();
+  const named = printed.split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  assert.ok(named.length >= 10, `allowedExtensionList() printed only ${named.length} entries: ${printed}`);
+
+  /* Every entry it prints must be one the CLI actually accepts... */
+  for (const extension of named) {
+    assert.ok(extension.startsWith("."), `allowedExtensionList() printed ${JSON.stringify(extension)}`);
+    assert.notEqual(
+      contentTypeForName(`plan${extension}`),
+      null,
+      `the CLI prints ${extension} as accepted but contentTypeForName refuses it`,
+    );
+  }
+
+  /* ...and every extension it accepts must be printed. This is the direction that catches a
+   * shortened printer. */
+  const groups = /const ALLOWED_TYPE_GROUPS = \[([\s\S]*?)\n\] as const;/.exec(
+    read("supabase/functions/command/file-artifacts.ts"),
+  )?.[1];
+  assert.ok(groups, "ALLOWED_TYPE_GROUPS is no longer a literal array");
+  for (const extension of [...groups!.matchAll(/extensions: \[([^\]]*)\]/g)]
+    .flatMap((match) => [...match[1]!.matchAll(/"([a-z0-9.]+)"/g)].map((entry) => entry[1]!))) {
+    assert.ok(
+      named.includes(`.${extension}`),
+      `the CLI accepts .${extension} but its printed list does not name it`,
+    );
+  }
+
+  // Negative control on the same invocation: the printer must not name something refused.
+  assert.equal(contentTypeForName("plan.exe"), null);
+  assert.ok(!named.includes(".exe"), "the printed list names .exe, which the CLI refuses");
+});
+
+
 /* "Case does not matter" was probed only for content_type, which validateFileCommand lowercases.
  * The NAME is stored as typed; extension case-insensitivity rests entirely on the "i" flag of
  * ALLOWED_EXTENSION_RE. A Grok arm measured that deleting that flag left the whole suite green

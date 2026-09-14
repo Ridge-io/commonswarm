@@ -7959,6 +7959,9 @@ import "../../styles/tokens.css";
               "image/jpeg": "jpg",
               "image/gif": "gif",
               "image/webp": "webp",
+              /* .svg is on the workspace allowlist, so a pasted SVG must not fall through to
+               * ".image" — that extension is on no allowlist and the upload is refused. */
+              "image/svg+xml": "svg",
             } as Record<string, string>)[file.type] ?? "image";
             return new File([file], `pasted-image-${index + 1}.${extension}`, {
               type: file.type,
